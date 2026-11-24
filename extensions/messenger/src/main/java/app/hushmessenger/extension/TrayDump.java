@@ -117,9 +117,13 @@ public final class TrayDump {
         try {
             Object key = threadKey, user = session;
             if (key == null || user == null) { android.util.Log.w(TAG, "preUpload: no session or chat"); return; }
-            boolean encrypted = (Boolean) key.getClass().getMethod("A1H").invoke(key);
-            android.util.Log.w(TAG, "preUpload: chat encrypted (A1H) = " + encrypted);
-            if (!encrypted) return;
+            StringBuilder checks = new StringBuilder();
+            for (java.lang.reflect.Method m : key.getClass().getMethods()) {
+                if (m.getParameterTypes().length != 0 || m.getReturnType() != boolean.class || !m.getName().startsWith("A")) continue;
+                try { checks.append(m.getName()).append('=').append(m.invoke(key)).append(' '); } catch (Throwable ignored) {}
+            }
+            android.util.Log.w(TAG, "preUpload: thread key checks: " + checks);
+            // debug.6: pre-upload whatever the key type, since sends here go through the encrypted twin thread.
             Class<?> type = media.getClass();
             int height = field(type, "A00").getInt(media), width = field(type, "A04").getInt(media);
             String path = ((android.net.Uri) field(type, "A0H").get(media)).getPath();
