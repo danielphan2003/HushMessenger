@@ -8,6 +8,9 @@ import app.morphe.patcher.extensions.InstructionExtensions.addInstructions
 import app.morphe.patcher.patch.PatchException
 import app.morphe.patcher.patch.bytecodePatch
 import com.android.tools.smali.dexlib2.AccessFlags
+import com.android.tools.smali.dexlib2.Opcode
+import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
+import com.android.tools.smali.dexlib2.iface.instruction.TwoRegisterInstruction
 
 private const val TRAY_DUMP = "Lapp/hushmessenger/extension/TrayDump;"
 
@@ -41,5 +44,19 @@ val trayDumpPatch = bytecodePatch(
         val session = if (static) "p1" else "p2"
         val key = if (static) "p2" else "p3"
         handler.addInstructions(0, "invoke-static {$session, $key}, $TRAY_DUMP->remember(Ljava/lang/Object;Ljava/lang/Object;)V")
+        // Fix experiment: where the tray is forced on, no sequenced sends (LX/Aeo;->A0N:Z is enableSequencedSends).
+        val aeo = mutableClassDefBy("LX/Aeo;")
+        val ctor = aeo.methods.singleOrNull { m ->
+            m.name == "<init>" && m.implementation?.instructions?.any { i ->
+                i.opcode == Opcode.IPUT_BOOLEAN && (i as ReferenceInstruction).reference.toString() == "LX/Aeo;->A0N:Z"
+            } == true
+        } ?: throw PatchException("Debug tray dump: Aeo's sequenced sends field moved")
+        val code = ctor.implementation!!.instructions.toList()
+        val at = code.indexOfFirst { i -> i.opcode == Opcode.IPUT_BOOLEAN && (i as ReferenceInstruction).reference.toString() == "LX/Aeo;->A0N:Z" }
+        val value = (code[at] as TwoRegisterInstruction).registerA
+        ctor.addInstructions(at, """
+            invoke-static/range {v$value .. v$value}, Lapp/hushmessenger/extension/Settings;->traySequencedSends(Z)Z
+            move-result v$value
+        """)
     }
 }

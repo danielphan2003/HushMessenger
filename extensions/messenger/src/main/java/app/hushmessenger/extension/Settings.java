@@ -1357,7 +1357,21 @@ public final class Settings {
             hookFailedPrivately(GalleryPicker.CHAT_KEY, "Couldn't add the tray for what you pick", error);
         }
         chatTray = tray;
+        chatTrayForced = tray && !stock;
         return tray;
+    }
+    /** Whether the last tray answer was forced on by Put gallery picks in the chat (Messenger's own answer was no). */
+    static volatile boolean chatTrayForced;
+    /**
+     * The composer's sequenced sends (text sent after the media, closing the media's send group). Messenger turns that
+     * mode on only with the tray, so where the tray is ours alone the text goes out as a plain message instead: closing a
+     * group while its photo still uploads crashes Messenger's native upload code (a use-after-free that GrapheneOS's
+     * memory tagging catches).
+     */
+    public static boolean traySequencedSends(boolean stock) {
+        boolean answer = stock && !chatTrayForced;
+        android.util.Log.w("HushTrayDump", "traySequencedSends: stock=" + stock + " forced=" + chatTrayForced + " -> " + answer);
+        return answer;
     }
     /**
      * The same handler asks this before anything else. With Put gallery picks in the chat on, a pick from the pick screen
