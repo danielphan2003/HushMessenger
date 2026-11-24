@@ -1385,6 +1385,7 @@ public final class Settings {
     public static java.util.List<Object> galleryChatItem(android.content.Intent data, Object media) {
         try {
             if (data == null || media == null || !data.getBooleanExtra(GalleryPicker.ONE_ITEM, false)) return null;
+            TrayDump.fillSize(media);   // debug experiment: does a real width, height and size stop the caption crash?
             return java.util.Collections.singletonList(media);
         } catch (RuntimeException error) {
             hookFailedPrivately(GalleryPicker.CHAT_KEY, "Couldn't put what you picked in the chat", error);

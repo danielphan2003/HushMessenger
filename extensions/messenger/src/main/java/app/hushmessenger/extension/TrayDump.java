@@ -21,6 +21,40 @@ public final class TrayDump {
         }
     }
 
+    /**
+     * Debug experiment for 347415355/6 only: the gallery pick's MediaResource carries width (A04), height (A00) and file
+     * size (A09) as 0. Fill them from the file it points at (A0H), the way Messenger's own gallery fills them.
+     */
+    public static void fillSize(Object media) {
+        try {
+            Class<?> type = media.getClass();
+            Object uri = field(type, "A0H").get(media);
+            String path = uri == null ? null : ((android.net.Uri) uri).getPath();
+            if (path == null) { android.util.Log.w(TAG, "fillSize: no file"); return; }
+            java.io.File file = new java.io.File(path);
+            android.graphics.BitmapFactory.Options bounds = new android.graphics.BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            android.graphics.BitmapFactory.decodeFile(path, bounds);
+            int width = bounds.outWidth, height = bounds.outHeight;
+            long size = file.length();
+            android.util.Log.w(TAG, "fillSize: " + width + "x" + height + ", " + size + " bytes; before A04=" + field(type, "A04").getInt(media)
+                    + " A00=" + field(type, "A00").getInt(media) + " A09=" + field(type, "A09").getLong(media));
+            if (width > 0 && height > 0) {
+                field(type, "A04").setInt(media, width);
+                field(type, "A00").setInt(media, height);
+            }
+            if (size > 0) field(type, "A09").setLong(media, size);
+        } catch (Throwable error) {
+            android.util.Log.w(TAG, "fillSize failed: " + error);
+        }
+    }
+
+    private static Field field(Class<?> type, String name) throws NoSuchFieldException {
+        Field field = type.getDeclaredField(name);
+        field.setAccessible(true);
+        return field;
+    }
+
     private static String caller() {
         StackTraceElement[] stack = new Throwable().getStackTrace();
         StringBuilder out = new StringBuilder();
