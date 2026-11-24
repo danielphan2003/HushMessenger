@@ -1,0 +1,47 @@
+# Builds the patch bundle on a tag and attaches it to a release, so patchbay
+# (Daniel's patched-app pipeline) can pin this fork's bundle by URL and SHA-256
+# the same way it pins upstream's. Tags are vX.Y.Z-dp.N on the patchbay branch.
+name: Bundle
+
+on:
+  push:
+    tags: ["v*-dp.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - name: Build the bundle
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./gradlew :patches:buildAndroid --no-daemon
+      - name: Checksum
+        run: |
+          cd patches/build/libs
+          ls -l
+          sha256sum *.mpp | tee SHA256SUMS.txt
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" patches/build/libs/*.mpp patches/build/libs/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
+            --notes "Built by this workflow from $GITHUB_SHA."
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        with:
+          name: bundle
+          path: patches/build/libs/
