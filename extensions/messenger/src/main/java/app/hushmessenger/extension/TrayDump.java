@@ -100,6 +100,47 @@ public final class TrayDump {
         }
     }
 
+    private static volatile Object session, threadKey;
+
+    /** Debug: the pick handler's session and chat, for the pre-upload experiment. */
+    public static void remember(Object fbSession, Object key) {
+        session = fbSession;
+        threadKey = key;
+        android.util.Log.w(TAG, "remember: session=" + (fbSession == null ? "null" : fbSession.getClass().getName()) + " key=" + key);
+    }
+
+    /**
+     * Debug experiment for 347415355: start Messenger's own pre-upload for the pick in an encrypted chat, the way the
+     * editor (UxJ.A02) and the share sheet (PVv.run) do: ((4dA) 1AY.A06(session, 65582)).A0W(height, width, path, true, hd).
+     */
+    public static void preUpload(Object media) {
+        try {
+            Object key = threadKey, user = session;
+            if (key == null || user == null) { android.util.Log.w(TAG, "preUpload: no session or chat"); return; }
+            boolean encrypted = (Boolean) key.getClass().getMethod("A1H").invoke(key);
+            android.util.Log.w(TAG, "preUpload: chat encrypted (A1H) = " + encrypted);
+            if (!encrypted) return;
+            Class<?> type = media.getClass();
+            int height = field(type, "A00").getInt(media), width = field(type, "A04").getInt(media);
+            String path = ((android.net.Uri) field(type, "A0H").get(media)).getPath();
+            java.lang.reflect.Method lookup = null;
+            for (java.lang.reflect.Method m : Class.forName("X.1AY").getDeclaredMethods())
+                if (m.getName().equals("A06") && m.getParameterTypes().length == 2 && m.getParameterTypes()[1] == int.class) lookup = m;
+            if (lookup == null) { android.util.Log.w(TAG, "preUpload: no 1AY.A06"); return; }
+            lookup.setAccessible(true);
+            Object uploader = lookup.invoke(null, user, 65582);
+            java.lang.reflect.Method upload = null;
+            for (java.lang.reflect.Method m : uploader.getClass().getDeclaredMethods())
+                if (m.getName().equals("A0W") && m.getParameterTypes().length == 5) upload = m;
+            if (upload == null) { android.util.Log.w(TAG, "preUpload: no A0W on " + uploader.getClass().getName()); return; }
+            upload.setAccessible(true);
+            upload.invoke(uploader, Integer.valueOf(height), Integer.valueOf(width), path, true, false);
+            android.util.Log.w(TAG, "preUpload: started " + width + "x" + height + " " + path);
+        } catch (Throwable error) {
+            android.util.Log.w(TAG, "preUpload failed: " + error + (error.getCause() == null ? "" : " / " + error.getCause()));
+        }
+    }
+
     private static Field field(Class<?> type, String name) throws NoSuchFieldException {
         Field field = type.getDeclaredField(name);
         field.setAccessible(true);

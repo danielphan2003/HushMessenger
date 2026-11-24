@@ -7,6 +7,7 @@ import app.hushmessenger.patches.controls.settingsExtension
 import app.morphe.patcher.extensions.InstructionExtensions.addInstructions
 import app.morphe.patcher.patch.PatchException
 import app.morphe.patcher.patch.bytecodePatch
+import com.android.tools.smali.dexlib2.AccessFlags
 
 private const val TRAY_DUMP = "Lapp/hushmessenger/extension/TrayDump;"
 
@@ -29,5 +30,16 @@ val trayDumpPatch = bytecodePatch(
         } ?: throw PatchException("Debug tray dump: the tray insert constructor moved")
         // p0 is the event, p1 a single attachment or null, p2 the list.
         init.addInstructions(0, "invoke-static {p1, p2}, $TRAY_DUMP->dump(Ljava/lang/Object;Ljava/util/List;)V")
+        // Debug experiment: remember the chat's session and key where a pick comes back (gallery_to_chat's handler).
+        val handler = mutableClassDefBy("LX/6C7;").methods.singleOrNull { m ->
+            m.name == "A00" && m.parameterTypes.map { it.toString() } == listOf(
+                "Landroidx/fragment/app/Fragment;", "Lcom/facebook/auth/usersession/FbUserSession;",
+                "Lcom/facebook/messaging/model/threadkey/ThreadKey;",
+                "Lcom/facebook/xapp/messaging/composer/activity/event/ActivityResultEvent;", "LX/5Re;")
+        } ?: throw PatchException("Debug tray dump: the pick handler moved")
+        val static = AccessFlags.STATIC.isSet(handler.accessFlags)
+        val session = if (static) "p1" else "p2"
+        val key = if (static) "p2" else "p3"
+        handler.addInstructions(0, "invoke-static {$session, $key}, $TRAY_DUMP->remember(Ljava/lang/Object;Ljava/lang/Object;)V")
     }
 }
