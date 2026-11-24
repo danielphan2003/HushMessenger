@@ -705,6 +705,8 @@ final class SettingsTextZhTw {
         {"call_confirm.description", "點按語音或視訊通話按鈕時會先詢問，避免誤觸打給別人。適用於聊天室頂端列、商家聊天室和「新訊息」畫面。點「通話」才會開始，點「取消」則不會。來電不受影響。"},
         {"original_photo.title", "以原始畫質傳送相片"},
         {"original_photo.description", "啟用 HD 時，以完整尺寸傳送 JPEG 相片，不再縮小。仍會移除位置資訊。超過 20 MB 的相片仍會縮小。"},
+        {"hd_default.title", "HD photos by default"},
+        {"hd_default.description", "Photos start in HD, like tapping HD yourself. If you turn HD off for a photo, Messenger remembers that until you turn it back on."},
         {"original_video.title", "傳送影片時不重新編碼"},
         {"original_video.description", "在 Messenger 允許時傳送影片原始檔案，取代重新壓縮的版本。超過 25 MB 的影片及編輯過的影片仍會壓縮。"},
         {"xhe_audio.title", "修正無法傳送的影片"},

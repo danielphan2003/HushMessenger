@@ -119,6 +119,7 @@ internal val settingsExtension = bytecodePatch(description = "Load HushMessenger
         autoReplyPictureRecipe = null
         galleryRoute = null
         galleryChatRoute = null
+        hdDefaultSearch = null
         pinLimitGetters = emptySet()
         metaAiFlagGetters = emptySet()
         monospaceMakers = emptySet()
@@ -947,6 +948,44 @@ val chatAnimationPatch = bytecodePatch(
         legacy.injectLegacyChatAnimation()
         recordControl("chat_animation")
         chatAnimationApplied = true
+    }
+}
+
+private var hdDefaultApplied = false
+
+private val hdDefaultResources = resourcePatch(description = "Record HushMessenger capability: $HD_DEFAULT") {
+    dependsOn(settingsResources)
+    execute {
+        hdDefaultApplied = false
+        document("AndroidManifest.xml").use { it.requireFeatureAbsent(HD_DEFAULT) }
+    }
+    finalize {
+        if (hdDefaultApplied) document("AndroidManifest.xml").use { it.addFeature(HD_DEFAULT) }
+    }
+}
+
+@Suppress("unused")
+val hdDefaultPatch = bytecodePatch(
+    name = "HD photos by default",
+    description = "Photos start in HD, like tapping HD yourself. If you turn HD off for a photo, Messenger remembers that until you turn it back on. Starts off. Turn it on in HushMessenger settings > Controls.",
+    default = true,
+) {
+    category("Photos and videos")
+    compatibleWith(MessengerTarget.COMPATIBILITY)
+    dependsOn(settingsExtension, hdDefaultResources)
+    execute {
+        // Found by shape during discovery, which keeps the reason when either method isn't there exactly once.
+        val sites = (hdDefaultSearch ?: throw PatchException("HD photos by default: Messenger's code wasn't read")).getOrThrow()
+        fun mutable(found: Method) = mutableClassDefBy(found.definingClass).methods.single { it.hookId() == found.hookId() }
+        val gate = mutable(sites.gate)
+        val read = mutable(sites.read)
+        // Both are checked before the first edit, so a changed build fails with the APK untouched.
+        gate.validateHdDefaultGate()
+        read.hdDefaultRead()
+        gate.injectHdDefaultGate()
+        read.injectHdDefaultRead()
+        recordControl(HD_DEFAULT)
+        hdDefaultApplied = true
     }
 }
 

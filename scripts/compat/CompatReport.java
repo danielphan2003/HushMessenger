@@ -383,7 +383,7 @@ public class CompatReport {
             "--bundle", bundle.toAbsolutePath().toString(), "--java",
             Path.of(System.getProperty("java.home"), "bin", "java").toString(), "--aapt2", aapt2));
         var names = new TreeSet<>(PATCHES.keySet());
-        names.addAll(List.of("Install beside Meta apps", "Restore screens on re-signed builds", "Material You theme", CLONE));
+        names.addAll(List.of("Install beside Meta apps", "Restore screens on re-signed builds", "Material You theme", "HD photos by default", CLONE));
         for (var name : names) { command.add("--enable"); command.add(name); }
         return new ProcessBuilder(command).inheritIO().start().waitFor() == 0;
     }
@@ -1591,6 +1591,21 @@ public class CompatReport {
                 System.out.println("[FAIL] Material You theme");
                 for (var f : failures) System.out.println("       " + f);
                 blockers.add("Material You theme");
+                anyFail = true;
+            }
+        }
+
+        // Check HD photos by default, which also finds its targets when it patches
+        {
+            var targets = new ArrayList<String>();
+            var failures = hdDefaultProblems(classes, targets);
+            if (failures.isEmpty()) {
+                System.out.println("[PASS] HD photos by default");
+                for (var t : targets) System.out.println("       " + t);
+            } else {
+                System.out.println("[FAIL] HD photos by default");
+                for (var f : failures) System.out.println("       " + f);
+                blockers.add("HD photos by default");
                 anyFail = true;
             }
         }

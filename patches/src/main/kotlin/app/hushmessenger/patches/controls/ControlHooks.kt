@@ -135,6 +135,7 @@ private fun sharedChecks(): List<WalkCheck> = listOf(
     inboundCopies, tempFolderChecks, configHolders, playoutSwitches, playoutWriters, recordHandovers, recentMediaDetectors,
     attributionUploads, instantCaptures, pinLimitLoaders, sharedFlagReaders, aiMentionShapes, headerRenders, logBars,
     ringMountClasses, roundingPrinterClasses, legacyRoundings, tileShapeFlags, messageDebugStrings,
+    hdDefaultFlagReaders, hdDefaultKeyMakers, hdDefaultPreferenceReads,
 )
 
 /** Match semantics first, then require the exact set the build's profile records. */
@@ -283,6 +284,8 @@ private fun findControlsIn(classes: Iterable<ClassDef>, community: CommunityInbo
     found.getValue(GALLERY_TEMP_FILE).addAll(findGalleryTempFile(classes))
     found.getValue(GALLERY_TO_CHAT).addAll(findGalleryToChat(classes))
     for ((hook, methods) in findCustomFont(classes)) found.getValue(hook).addAll(methods)
+    // No profile records HD photos by default, so a miss here only stops that patch, which reports why.
+    hdDefaultSearch = runCatching { findHdDefault(classes) }
     return found
 }
 

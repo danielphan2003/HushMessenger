@@ -215,7 +215,7 @@ class CatalogToolTest {
         val manifest = root.resolve("extensions/messenger/src/main/AndroidManifest.xml").readText()
         val names = Regex("""controlPatch\("[a-z_]+",\s*"([^"]+)"""").findAll(patch)
             .map { it.groupValues[1] }.toSet() + CatalogTool.NON_CONTROL_PATCHES + "Material You theme" + "View stories anonymously" + "Save any story" + "Slide chats in and out" +
-            "Bold and italic text"
+            "Bold and italic text" + "HD photos by default"
         assertTrue("people" in CatalogTool.validateDefinitions(patch, ui, manifest, names))
         assertFailsWith<IllegalArgumentException> { CatalogTool.validateDefinitions(patch.replace("controlPatch(\"people\"", "controlPatch(\"changed\""), ui, manifest, names) }
         val constantKey = assertFailsWith<IllegalArgumentException> {
