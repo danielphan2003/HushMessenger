@@ -10,7 +10,58 @@ public final class TrayDump {
 
     private TrayDump() {}
 
+    private static boolean copied;
+
+    /** Debug: copy Meta's decompressed native library where adb can read it, once per process. */
+    private static void copyNativeLibrary() {
+        if (copied) return;
+        copied = true;
+        try {
+            android.content.Context context = Settings.appContext;
+            if (context == null) return;
+            java.io.File out = context.getExternalFilesDir(null);
+            java.io.File dir = new java.io.File(context.getApplicationInfo().dataDir, "lib-compressed");
+            String[] names = dir.list();
+            android.util.Log.w(TAG, "lib-compressed: " + (names == null ? "none" : java.util.Arrays.toString(names)));
+            for (String name : new String[] {"libstartup.so"}) {
+                java.io.File source = new java.io.File(dir, name);
+                if (!source.isFile()) continue;
+                java.io.File target = new java.io.File(out, name);
+                try (java.io.InputStream in = new java.io.FileInputStream(source); java.io.OutputStream o = new java.io.FileOutputStream(target)) {
+                    byte[] buffer = new byte[1 << 16];
+                    for (int n; (n = in.read(buffer)) > 0; ) o.write(buffer, 0, n);
+                }
+                android.util.Log.w(TAG, "copied " + name + " (" + source.length() + " bytes) to " + target);
+            }
+        } catch (Throwable error) {
+            android.util.Log.w(TAG, "native library copy failed: " + error);
+        }
+    }
+
+    /** Debug: every value of the send source's two enums, with their analytics names. */
+    private static void sendSourceValues(Object media) {
+        try {
+            Object source = field(media.getClass(), "A0Z").get(media);
+            for (String name : new String[] {"A00", "A01"}) {
+                Object value = field(source.getClass(), name).get(source);
+                Class<?> type = value.getClass();
+                if (!type.isEnum() && type.getSuperclass() != null && type.getSuperclass().isEnum()) type = type.getSuperclass();
+                StringBuilder all = new StringBuilder();
+                for (Object constant : type.getEnumConstants()) {
+                    String analytics;
+                    try { analytics = String.valueOf(field(type, "analyticsName").get(constant)); } catch (Throwable e) { analytics = "?"; }
+                    all.append(((Enum<?>) constant).name()).append('=').append(analytics).append(", ");
+                }
+                for (int i = 0; i < all.length(); i += 900) android.util.Log.w(TAG, "source " + name + " values: " + all.substring(i, Math.min(all.length(), i + 900)));
+            }
+        } catch (Throwable error) {
+            android.util.Log.w(TAG, "send source values failed: " + error);
+        }
+    }
+
     public static void dump(Object single, List<?> items) {
+        copyNativeLibrary();
+        if (items != null && !items.isEmpty() && items.get(0) != null) sendSourceValues(items.get(0));
         try {
             android.util.Log.w(TAG, "insert: single=" + (single == null ? "null" : single.getClass().getName())
                     + " items=" + (items == null ? "null" : items.size()) + " from=" + caller());
