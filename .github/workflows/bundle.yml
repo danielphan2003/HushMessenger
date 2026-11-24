@@ -6,6 +6,7 @@ name: Bundle
 on:
   push:
     tags: ["v*-dp.*"]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -26,7 +27,8 @@ jobs:
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./gradlew :patches:buildAndroid --no-daemon
+        # The unit tests need no stock APKs (:patches:check does, so it stays out).
+        run: ./gradlew :patches:test :patches:buildAndroid --no-daemon
       - name: Checksum
         run: |
           cd patches/build/libs
