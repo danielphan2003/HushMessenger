@@ -23,6 +23,7 @@ import app.hushmessenger.patches.controls.resolveShortcutsPath
 import app.morphe.patcher.extensions.InstructionExtensions.addInstruction
 import app.morphe.patcher.extensions.InstructionExtensions.replaceInstruction
 import app.morphe.patcher.patch.PatchException
+import app.morphe.patcher.patch.booleanOption
 import app.morphe.patcher.patch.bytecodePatch
 import app.morphe.patcher.patch.resourcePatch
 import app.morphe.patcher.patch.stringOption
@@ -126,7 +127,7 @@ private val permissionTags = setOf("permission", "uses-permission", "uses-permis
  * beside Messenger without a duplicate permission, provider authority or task. Class names stay as they are. They
  * name DEX classes, and the app icon aliases keep the names Messenger's own icon switch looks up.
  */
-internal fun Document.renameForClone(newPackage: String, label: String): CloneManifest {
+internal fun Document.renameForClone(newPackage: String, label: String, sharePermissions: Boolean = true): CloneManifest {
     if (!isClonePackage(newPackage)) fail("$newPackage can't be used as a package name")
     if (!isCloneLabel(label)) fail("\"$label\" can't be used as an app name")
     val manifest = documentElement
@@ -134,9 +135,13 @@ internal fun Document.renameForClone(newPackage: String, label: String): CloneMa
     val application = all("application").singleOrNull() ?: fail("expected one application")
 
     // Messenger's own permissions move. The two every patched Meta app shares must already carry the shared names,
-    // which two apps signed with the same key can both declare.
+    // which two apps signed with the same key can both declare. A copy signed with another key can't declare a name
+    // the patched Facebook already owns, so without sharing those move under the copy's own name too.
     val declared = all("permission").map { it.getAttribute("android:name") }
-    val permissions = declared.mapNotNull { name -> cloneName(name, newPackage)?.let { name to it } }.toMap()
+    val permissions = declared.mapNotNull { name ->
+        (cloneName(name, newPackage) ?: if (!sharePermissions && name.startsWith(SHARED_PREFIX)) "$newPackage.${name.removePrefix(SHARED_PREFIX)}" else null)
+            ?.let { name to it }
+    }.toMap()
     val stuck = declared.filter { it !in permissions && !it.startsWith(SHARED_PREFIX) }
     if (stuck.isNotEmpty()) fail("Messenger declares ${stuck.joinToString()} under a name another app can own")
     if (permissions.isEmpty()) fail("Messenger declares no permissions of its own")
@@ -548,15 +553,15 @@ internal fun applyCloneCode(
     edits()
 }
 
-private class CloneRequest(val packageName: String, val label: String)
+private class CloneRequest(val packageName: String, val label: String, val sharePermissions: Boolean)
 
 private var cloneRequest: CloneRequest? = null
 
 /** Hands the checked name and label to the manifest rename, which runs once every other patch has executed. */
-internal fun requestClone(packageName: String, label: String) {
+internal fun requestClone(packageName: String, label: String, sharePermissions: Boolean = true) {
     if (!isClonePackage(packageName)) fail("$packageName can't be used as a package name")
     if (!isCloneLabel(label)) fail("\"$label\" can't be used as an app name")
-    cloneRequest = CloneRequest(packageName, label)
+    cloneRequest = CloneRequest(packageName, label, sharePermissions)
 }
 
 internal val cloneResources = resourcePatch(description = "Move Messenger's manifest to the clone's package name") {
@@ -572,7 +577,7 @@ internal val cloneResources = resourcePatch(description = "Move Messenger's mani
         val undecoded = MANIFEST_STRINGS.keys.filterNot { get(it, false).exists() }
         if (undecoded.isNotEmpty()) decode(*undecoded.toTypedArray())
         if (!get(DEFAULT_STRINGS, false).exists()) fail("Messenger has no $DEFAULT_STRINGS to hold the app name")
-        document("AndroidManifest.xml").use { it.renameForClone(request.packageName, request.label) }
+        document("AndroidManifest.xml").use { it.renameForClone(request.packageName, request.label, request.sharePermissions) }
         document(shortcutsPath).use { it.retargetShortcuts(request.packageName) }
         for (path in MANIFEST_STRINGS.keys) if (get(path, false).exists()) document(path).use { it.nameClone(path, request.label) }
     }
@@ -621,6 +626,14 @@ val cloneInstallPatch = bytecodePatch(
         required = true,
     ) { isFacebookPackage(it) }
 
+    val sharePermissions by booleanOption(
+        key = "cloneSharePermissions",
+        default = true,
+        title = "Share Hush apps' permissions",
+        description = "Keep the permissions HushFacebook and HushMessenger share, so the copy works with a HushFacebook signed by the same key. Turn it off when the copy is signed with another key, or Android refuses to install it beside that HushFacebook.",
+        required = true,
+    )
+
     execute {
         val target = packageName?.takeIf(::isClonePackage) ?: fail("$packageName can't be used as a package name")
         val label = appLabel?.takeIf(::isCloneLabel) ?: fail("\"$appLabel\" can't be used as an app name")
@@ -647,6 +660,6 @@ val cloneInstallPatch = bytecodePatch(
                 mutableClassDefBy(id.substringBefore("->")).methods.single { it.hookId() == id } to site.substringAfter('@').toInt()
             }
         }
-        requestClone(target, label)
+        requestClone(target, label, sharePermissions != false)
     }
 }

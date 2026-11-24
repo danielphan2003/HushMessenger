@@ -320,6 +320,17 @@ private fun MutableMethod.loads(index: Int): Pair<Int, String> = code()[index].l
 }
 
 class CloneInstallPatchTest {
+    @Test fun withoutSharingTheSharedPermissionsMoveToTheCopy() {
+        val manifest = xml(STOCK).apply { addSettingsEntry() }
+        manifest.renameForClone(COPY, "Copy", sharePermissions = false)
+
+        assertEquals(listOf("$COPY.provider.ACCESS", "$COPY.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+            "$COPY.permission.prod.FB_APP_COMMUNICATION"), manifest.elements("permission").map { it.getAttribute("android:name") })
+        assertEquals(listOf("$COPY.provider.ACCESS", "$COPY.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION", "com.facebook.katana.provider.ACCESS",
+            "$COPY.permission.prod.FB_APP_COMMUNICATION"), manifest.elements("uses-permission").map { it.getAttribute("android:name") })
+        assertEquals("$COPY.permission.prod.FB_APP_COMMUNICATION", manifest.named("receiver", "stock.Notify").getAttribute("android:permission"))
+    }
+
     @Test fun theManifestMovesWholeToTheNewPackageAndKeepsClassNames() {
         val manifest = xml(STOCK).apply { addSettingsEntry() }
         val result = manifest.renameForClone(COPY, "Copy")
