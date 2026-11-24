@@ -11,6 +11,9 @@ import com.android.tools.smali.dexlib2.AccessFlags
 import com.android.tools.smali.dexlib2.Opcode
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.TwoRegisterInstruction
+import com.android.tools.smali.dexlib2.iface.instruction.OneRegisterInstruction
+import com.android.tools.smali.dexlib2.iface.reference.MethodReference
+import com.android.tools.smali.dexlib2.iface.reference.TypeReference
 
 private const val TRAY_DUMP = "Lapp/hushmessenger/extension/TrayDump;"
 
@@ -58,5 +61,29 @@ val trayDumpPatch = bytecodePatch(
             invoke-static/range {v$value .. v$value}, Lapp/hushmessenger/extension/Settings;->traySequencedSends(Z)Z
             move-result v$value
         """)
+        // Fix experiment 2: the composer configuration (new LX/584;) gets Messenger's own tray answer, not the forced one.
+        var wrapped = 0
+        classDefForEach { cls ->
+            cls.methods.filter { m ->
+                m.implementation?.instructions?.any { i -> i.opcode == Opcode.NEW_INSTANCE && ((i as ReferenceInstruction).reference as TypeReference).type == "LX/584;" } == true
+            }.forEach { m ->
+                val mutable = mutableClassDefBy(cls.type).methods.first { it.name == m.name && it.parameterTypes == m.parameterTypes && it.returnType == m.returnType }
+                val insns = mutable.implementation!!.instructions.toList()
+                // After each A1O()Z call's move-result, in reverse so earlier indexes stay valid.
+                insns.indices.reversed().filter { idx ->
+                    val ref = (insns[idx] as? ReferenceInstruction)?.reference as? MethodReference
+                    ref != null && ref.name == "A1O" && ref.returnType == "Z" && ref.parameterTypes.isEmpty() &&
+                        idx + 1 < insns.size && insns[idx + 1].opcode == Opcode.MOVE_RESULT
+                }.forEach { idx ->
+                    val reg = (insns[idx + 1] as OneRegisterInstruction).registerA
+                    mutable.addInstructions(idx + 2, """
+                        invoke-static/range {v$reg .. v$reg}, Lapp/hushmessenger/extension/Settings;->trayConfig(Z)Z
+                        move-result v$reg
+                    """)
+                    wrapped++
+                }
+            }
+        }
+        if (wrapped == 0) throw PatchException("Debug tray dump: no A1O read where LX/584; is built")
     }
 }

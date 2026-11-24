@@ -1368,6 +1368,12 @@ public final class Settings {
      * group while its photo still uploads crashes Messenger's native upload code (a use-after-free that GrapheneOS's
      * memory tagging catches).
      */
+    /** The composer configuration's tray flag (584.A03): Messenger's own answer where the tray is ours alone. */
+    public static boolean trayConfig(boolean answer) {
+        boolean result = chatTrayForced ? false : answer;
+        android.util.Log.w("HushTrayDump", "trayConfig: answer=" + answer + " forced=" + chatTrayForced + " -> " + result);
+        return result;
+    }
     public static boolean traySequencedSends(boolean stock) {
         boolean answer = stock && !chatTrayForced;
         android.util.Log.w("HushTrayDump", "traySequencedSends: stock=" + stock + " forced=" + chatTrayForced + " -> " + answer);
