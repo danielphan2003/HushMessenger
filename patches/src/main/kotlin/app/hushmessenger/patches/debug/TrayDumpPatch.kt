@@ -18,7 +18,7 @@ private const val TRAY_DUMP = "Lapp/hushmessenger/extension/TrayDump;"
 val trayDumpPatch = bytecodePatch(
     name = "Debug: log chat tray attachments",
     description = "Diagnostics for test builds: logs the fields of every attachment that enters a chat's tray.",
-    default = false,
+    default = true,   // only on the debug branch, which never ships a release
 ) {
     compatibleWith(MessengerTarget.COMPATIBILITY)
     dependsOn(settingsExtension)
