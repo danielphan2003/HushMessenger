@@ -180,6 +180,16 @@ private fun Method.hdKeyFields(keyType: String): Set<String> {
     }.toSet()
 }
 
+/** The fields [cls]'s initializer copies one of [keys] into, as a holder of its own preference keys does. */
+private fun hdHolderKeyFields(cls: ClassDef, keys: Set<String>): Set<String> {
+    val code = cls.methods.singleOrNull { it.name == "<clinit>" }?.hdCode() ?: return emptySet()
+    return code.indices.mapNotNull { i ->
+        val next = code.getOrNull(i + 1) ?: return@mapNotNull null
+        if (code[i].opcode == Opcode.SGET_OBJECT && code[i].hdRef().toString() in keys &&
+            next.opcode == Opcode.SPUT_OBJECT && next.hdRegister() == code[i].hdRegister()) next.hdRef().toString() else null
+    }.toSet()
+}
+
 /** Whether [cls]'s initializer copies one of [keys] into [field], as a holder of its own preference keys does. */
 private fun hdCopiesKey(cls: ClassDef, field: String, keys: Set<String>): Boolean {
     val code = cls.methods.singleOrNull { it.name == "<clinit>" }?.hdCode() ?: return false
@@ -354,11 +364,12 @@ internal fun findHdDefault(classes: Iterable<ClassDef>): HdDefaultSites {
     val found = reads.singleOrNull() ?: hdDefaultChanged("expected one read of the $HD_TOGGLE_KEY preference, found ${reads.size}")
     val read = found.first
     val holder = classes.firstOrNull { it.type == read.definingClass }
+    val writeKeys = setOf(found.second) + (holder?.let { hdHolderKeyFields(it, keys) } ?: emptySet())
     val writes: List<Method> = holder?.methods?.filter { method: Method ->
         method.returnType == "V" && AccessFlags.STATIC.isSet(method.accessFlags) &&
             method.parameterTypes.map(CharSequence::toString) == listOf("Z") &&
             method.implementation?.instructions?.any { instruction: Instruction ->
-                (instruction as? ReferenceInstruction)?.reference?.toString() == found.second
+                (instruction as? ReferenceInstruction)?.reference?.toString() in writeKeys
             } == true
     } ?: emptyList()
     val write = writes.singleOrNull() ?: hdDefaultChanged("expected one store of the $HD_TOGGLE_KEY preference, found ${writes.size}")
