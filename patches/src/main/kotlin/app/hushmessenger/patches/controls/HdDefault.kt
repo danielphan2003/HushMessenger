@@ -202,7 +202,7 @@ internal fun Method.hdDefaultInsert(): HdDefaultInsert {
     val literal = (0 until at).any { code[it].opcode == Opcode.CONST_4 && code[it].hdRegister() == answer &&
         (code[it] as? NarrowLiteralInstruction)?.narrowLiteral == 0 }
     if (!literal) hdDefaultChanged("the composer's HD answer no longer starts false")
-    if (code.getOrNull(at + 1)?.opcode != Opcode.RETURN) hdDefaultChanged("the composer's HD answer isn't stored last")
+    if (code.getOrNull(at + 1)?.opcode != Opcode.RETURN_VOID) hdDefaultChanged("the composer's HD answer isn't stored last")
     val temp = (0 until firstParameter).firstOrNull { it != answer && it !in arguments }
         ?: hdDefaultChanged("the attachment preview's handler has no free register")
     val addresses = code.runningFold(0) { address, instruction -> address + instruction.codeUnits }

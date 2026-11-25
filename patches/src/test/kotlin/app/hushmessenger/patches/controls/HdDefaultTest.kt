@@ -168,7 +168,7 @@ class HdDefaultTest {
         assertEquals(listOf(Opcode.IF_EQZ, Opcode.CONST_STRING, Opcode.INVOKE_STATIC, Opcode.MOVE_RESULT,
             Opcode.IF_EQZ, Opcode.INVOKE_STATIC, Opcode.MOVE_RESULT), code.subList(store - 7, store).map { it.opcode })
         // The stock branch is untouched after the store.
-        assertEquals(Opcode.RETURN, code[store + 1].opcode)
+        assertEquals(Opcode.RETURN_VOID, code[store + 1].opcode)
     }
 
     @Test fun anInsertHandlerThatTakesItsAnswerAsAParameterIsRefused() {

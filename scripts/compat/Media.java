@@ -1580,7 +1580,7 @@ final class Media {
                 !params.contains(call.getParameterTypes().get(0).toString())) continue;
             var args = hdArguments(code.get(i));
             if (args.size() != 2 || args.get(1) >= parameterRegister(m, 0) || i + 1 >= code.size() ||
-                code.get(i + 1).getOpcode() != Opcode.RETURN) return false;
+                code.get(i + 1).getOpcode() != Opcode.RETURN_VOID) return false;
             int answer = args.get(1);
             boolean startsFalse = false;
             for (int j = 0; j < i; j++) {
