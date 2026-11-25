@@ -120,6 +120,7 @@ internal val settingsExtension = bytecodePatch(description = "Load HushMessenger
         galleryRoute = null
         galleryChatRoute = null
         hdDefaultSearch = null
+        galleryTrayTextSearch = null
         pinLimitGetters = emptySet()
         metaAiFlagGetters = emptySet()
         monospaceMakers = emptySet()
@@ -517,6 +518,12 @@ private fun controlPatch(key: String, title: String, summary: String, group: Str
                 for ((row, _) in helpers) row.checkUnsentRowHelper()
                 injectControl(key, methods)
                 for ((row, helper) in helpers) row.addUnsentRowHelper(helper)
+            } else if (key == GALLERY_TO_CHAT) {
+                val site = (galleryTrayTextSearch ?: throw PatchException("Messenger controls: Messenger's code wasn't read for $GALLERY_TO_CHAT")).getOrThrow()
+                val caller = mutableClassDefBy(site.caller.definingClass).methods.single { it.hookId() == site.caller.hookId() }
+                caller.galleryTrayTextCalls(site.target)
+                injectControl(key, methods)
+                caller.injectGalleryTrayText(site)
             } else if (key == INBOX_SEARCH_BAR) {
                 val host = mutableClassDefBy(SETTINGS)
                 val stub = host.methods.singleOrNull { it.hookId() == SEARCH_ICON_STUB }

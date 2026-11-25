@@ -3,6 +3,7 @@ package app.hushmessenger.patches.controls
 import app.morphe.patcher.extensions.InstructionExtensions.addInstructions
 import app.morphe.patcher.extensions.InstructionExtensions.addInstructionsWithLabels
 import app.morphe.patcher.extensions.InstructionExtensions.getInstruction
+import app.morphe.patcher.extensions.InstructionExtensions.replaceInstructions
 import app.morphe.patcher.patch.PatchException
 import app.morphe.patcher.util.proxy.mutableTypes.MutableMethod
 import app.morphe.patcher.util.smali.ExternalLabel
@@ -15,6 +16,7 @@ import com.android.tools.smali.dexlib2.iface.instruction.Instruction
 import com.android.tools.smali.dexlib2.iface.instruction.NarrowLiteralInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.OffsetInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.OneRegisterInstruction
+import com.android.tools.smali.dexlib2.iface.instruction.RegisterRangeInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.TwoRegisterInstruction
 
 /**
@@ -31,6 +33,8 @@ internal const val INSERT_PREVIEW_INIT = "$INSERT_PREVIEW-><init>(${AUTO_REPLY_M
 internal const val GALLERY_TO_CHAT_CALL = "$SETTINGS->galleryToChat(Landroid/content/Intent;)[Landroid/content/Intent;"
 internal const val GALLERY_CHAT_ITEM_CALL = "$SETTINGS->galleryChatItem(Landroid/content/Intent;Ljava/lang/Object;)Ljava/util/List;"
 internal const val GALLERY_TRAY_CALL = "$SETTINGS->galleryTray(Z)Z"
+internal const val GALLERY_TRAY_TEXT_CALL = "$SETTINGS->galleryTrayText(Ljava/lang/Object;Ljava/lang/Class;Ljava/util/List;Ljava/util/Map;)V"
+private val TRAY_SEND_TAIL = listOf("I", "Z", "Z", "Z", "Z")
 private const val ITEM_TYPE_CALL = "Landroid/content/Intent;->getType()Ljava/lang/String;"
 private const val INVOKE_SUSPEND = "invokeSuspend(Ljava/lang/Object;)Ljava/lang/Object;"
 private const val COROUTINE_STEP = "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"
@@ -46,6 +50,12 @@ internal data class GalleryChatRoute(val items: String, val itemsIntent: String,
 
 /** Set by [findGalleryToChat] and cleared once the controls are in. */
 internal var galleryChatRoute: GalleryChatRoute? = null
+
+/** The tray send method and the trailing-text sender it calls, discovered by shape. */
+internal data class GalleryTrayTextSite(val caller: Method, val target: Method)
+
+/** Set during discovery and cleared once the controls are in. */
+internal var galleryTrayTextSearch: Result<GalleryTrayTextSite>? = null
 
 private fun galleryChatChanged(detail: String): Nothing =
     throw PatchException("Messenger controls: the gallery result moved ($detail)")
@@ -377,4 +387,106 @@ internal fun MutableMethod.injectGalleryToChat() {
         sget-object $intent, ${site.unit}
         return-object $intent
     """.trimIndent(), ExternalLabel("editor", getInstruction(at)))
+}
+
+private fun Method.isTrailingTextSender(): Boolean {
+    if (!AccessFlags.STATIC.isSet(accessFlags) || returnType != "V" || parameterTypes.size != 4) return false
+    val params = parameterTypes.map { it.toString() }
+    return params[0].startsWith("L") && params[0].endsWith(";") &&
+        params[1] == "Ljava/lang/CharSequence;" &&
+        params[2] == "Ljava/util/List;" &&
+        params[3] == "Ljava/util/Map;"
+}
+
+private fun Method.callsStatic(targetId: String): Boolean =
+    implementation?.instructions?.any { inst ->
+        (inst.opcode == Opcode.INVOKE_STATIC || inst.opcode == Opcode.INVOKE_STATIC_RANGE) &&
+            inst.galleryMethod()?.toString() == targetId
+    } == true
+
+/**
+ * Finds the tray send method and its trailing-text sender by shape:
+ * - trailing-text sender: static `(L*;, CharSequence, List, Map)V`
+ * - caller: static method in the same class whose parameters end in `(I, Z, Z, Z, Z)` and which calls it.
+ */
+internal fun findGalleryTrayText(classes: Iterable<ClassDef>): GalleryTrayTextSite {
+    val pairs = mutableListOf<GalleryTrayTextSite>()
+    for (cls in classes) {
+        val targets = cls.methods.filter { it.isTrailingTextSender() }
+        if (targets.isEmpty()) continue
+        for (target in targets) {
+            val targetId = target.hookId()
+            val callers = cls.methods.filter { m ->
+                m !== target &&
+                    AccessFlags.STATIC.isSet(m.accessFlags) &&
+                    m.parameterTypes.size >= TRAY_SEND_TAIL.size &&
+                    m.parameterTypes.takeLast(TRAY_SEND_TAIL.size).map { it.toString() } == TRAY_SEND_TAIL &&
+                    m.callsStatic(targetId)
+            }
+            for (caller in callers) pairs += GalleryTrayTextSite(caller, target)
+        }
+    }
+    return pairs.singleOrNull()
+        ?: throw PatchException("Messenger controls: expected 1 tray caption send pair, found ${pairs.size}")
+}
+
+/**
+ * Indices of static calls to [target] whose CharSequence argument register was last written as constant 0.
+ */
+internal fun Method.galleryTrayTextCalls(target: Method): List<Int> {
+    val code = implementation?.instructions?.toList()
+        ?: throw PatchException("Messenger controls: tray caption caller has no implementation")
+    val targetId = target.hookId()
+    val indices = mutableListOf<Int>()
+    for (i in code.indices) {
+        val inst = code[i]
+        if (inst.opcode != Opcode.INVOKE_STATIC && inst.opcode != Opcode.INVOKE_STATIC_RANGE) continue
+        if (inst.galleryMethod()?.toString() != targetId) continue
+        val textReg = when (inst) {
+            is FiveRegisterInstruction -> inst.registerD
+            is RegisterRangeInstruction -> inst.startRegister + 1
+            else -> continue
+        }
+        val lastWrite = (i - 1 downTo 0).firstOrNull { code[it].galleryWrites(textReg) } ?: continue
+        val writeInst = code[lastWrite]
+        if (writeInst.opcode in TRAY_NULLS && (writeInst as NarrowLiteralInstruction).narrowLiteral == 0) {
+            indices += i
+        }
+    }
+    if (indices.isEmpty()) {
+        throw PatchException("Messenger controls: no null-text tray caption calls in ${hookId()}")
+    }
+    return indices
+}
+
+/**
+ * Replaces every null-text call to the trailing-text sender with a call to [GALLERY_TRAY_TEXT_CALL], passing the
+ * declaring class via `const-class` in the null register and restoring that register to 0 afterwards.
+ */
+internal fun MutableMethod.injectGalleryTrayText(site: GalleryTrayTextSite) {
+    val indices = galleryTrayTextCalls(site.target)
+    val owner = site.target.definingClass
+    for (idx in indices.asReversed()) {
+        val call = getInstruction(idx)
+        val (textReg, invokeLine) = when (call) {
+            is FiveRegisterInstruction -> {
+                val regs = listOf(call.registerC, call.registerD, call.registerE, call.registerF)
+                call.registerD to "invoke-static {${regs.joinToString(", ") { "v$it" }}}, $GALLERY_TRAY_TEXT_CALL"
+            }
+            is RegisterRangeInstruction -> {
+                val end = call.startRegister + call.registerCount - 1
+                (call.startRegister + 1) to "invoke-static/range {v${call.startRegister} .. v$end}, $GALLERY_TRAY_TEXT_CALL"
+            }
+            else -> throw PatchException("Messenger controls: unexpected tray caption call shape")
+        }
+        val restore = if (textReg <= 15) "const/4 v$textReg, 0x0" else "const/16 v$textReg, 0x0"
+        replaceInstructions(
+            idx,
+            """
+                const-class v$textReg, $owner
+                $invokeLine
+                $restore
+            """.trimIndent(),
+        )
+    }
 }

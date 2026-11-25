@@ -1343,6 +1343,11 @@ public final class Settings {
     }
     /** The chat composer's last answer from {@link #galleryTray}: whether the chat has Messenger's tray to put picks in. */
     static volatile boolean chatTray;
+    /** Whether {@link #galleryTray} forced the tray on where Messenger's own answer was false. */
+    static volatile boolean chatTrayForced;
+    private static volatile Class<?> galleryTrayTextOwner;
+    private static volatile java.lang.reflect.Method galleryTrayTextMethod;
+    private static volatile boolean galleryTrayTextMissing;
     /**
      * A chat's composer asks this whether to build Messenger's tray above the message box, which the server turns on for
      * some accounts and not others (#101). With no tray a pick put in the chat lands nowhere, so with Put gallery picks in
@@ -1357,7 +1362,72 @@ public final class Settings {
             hookFailedPrivately(GalleryPicker.CHAT_KEY, "Couldn't add the tray for what you pick", error);
         }
         chatTray = tray;
+        chatTrayForced = tray && !stock;
         return tray;
+    }
+    /**
+     * Sends the composer's trailing text after a tray photo. When the tray was forced on by Put gallery picks in the
+     * chat, Messenger builds the media message asynchronously and sends the text immediately, which triggers a native
+     * use-after-free in upload progress. Delaying the trailing text by 3 seconds on the main looper avoids the crash
+     * while keeping photo and caption in order.
+     */
+    public static void galleryTrayText(Object context, Class<?> owner, java.util.List<?> ids, java.util.Map<?, ?> metadata) {
+        java.lang.reflect.Method target = resolveGalleryTrayText(owner);
+        if (target == null) return;
+        Runnable send = () -> {
+            try {
+                target.invoke(null, context, null, ids, metadata);
+            } catch (Throwable error) {
+                hookFailedPrivately(GalleryPicker.CHAT_KEY, "Couldn't send the caption after the photo", error);
+            }
+        };
+        if (chatTrayForced) {
+            try {
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(send, 3000L);
+                return;
+            } catch (Throwable error) {
+                hookFailedPrivately(GalleryPicker.CHAT_KEY, "Couldn't delay the caption after the photo", error);
+            }
+        }
+        send.run();
+    }
+    private static java.lang.reflect.Method resolveGalleryTrayText(Class<?> owner) {
+        if (owner == null) return null;
+        if (galleryTrayTextOwner == owner) return galleryTrayTextMethod;
+        java.lang.reflect.Method found = null;
+        int matches = 0;
+        try {
+            for (java.lang.reflect.Method m : owner.getDeclaredMethods()) {
+                if (!java.lang.reflect.Modifier.isStatic(m.getModifiers()) || m.getReturnType() != void.class) continue;
+                Class<?>[] params = m.getParameterTypes();
+                if (params.length == 4 && !params[0].isPrimitive() && params[1] == CharSequence.class
+                        && params[2] == java.util.List.class && params[3] == java.util.Map.class) {
+                    found = m;
+                    matches++;
+                }
+            }
+            if (matches == 1) {
+                found.setAccessible(true);
+                galleryTrayTextMethod = found;
+                galleryTrayTextOwner = owner;
+                galleryTrayTextMissing = false;
+                return found;
+            }
+            galleryTrayTextMethod = null;
+            galleryTrayTextOwner = owner;
+            if (!galleryTrayTextMissing) {
+                galleryTrayTextMissing = true;
+                hookFailedPrivately(GalleryPicker.CHAT_KEY, "Couldn't find the tray caption sender",
+                        new IllegalStateException("Expected 1 tray caption sender, found " + matches));
+            }
+            return null;
+        } catch (Throwable error) {
+            if (!galleryTrayTextMissing) {
+                galleryTrayTextMissing = true;
+                hookFailedPrivately(GalleryPicker.CHAT_KEY, "Couldn't find the tray caption sender", error);
+            }
+            return null;
+        }
     }
     /**
      * The same handler asks this before anything else. With Put gallery picks in the chat on, a pick from the pick screen

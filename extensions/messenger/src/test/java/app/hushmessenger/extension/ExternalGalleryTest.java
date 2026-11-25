@@ -47,6 +47,7 @@ public class ExternalGalleryTest {
         Settings.activeAt.clear();
         Settings.hookErrors.clear();
         Settings.chatTray = false;
+        Settings.chatTrayForced = false;
         CrashGuard.resetForTests();
     }
 
@@ -749,10 +750,43 @@ public class ExternalGalleryTest {
         Settings.preferences.edit().putBoolean(GalleryPicker.KEY, true).commit();
         assertTrue(Settings.galleryTray(false));
         assertTrue(Settings.chatTray);
+        assertTrue(Settings.chatTrayForced);
         assertTrue(Settings.lastActive(GalleryPicker.CHAT_KEY) > 0);
         Settings.preferences.edit().putBoolean("paused", true).commit();
         assertFalse("Pause keeps the server's answer", Settings.galleryTray(false));
+        assertFalse(Settings.chatTrayForced);
         assertTrue(Settings.galleryTray(true));
+        assertFalse(Settings.chatTrayForced);
+        assertTrue(Settings.hookErrors.isEmpty());
+    }
+
+    public static final class FakeTraySender {
+        static int calls;
+        static Object lastContext;
+        static CharSequence lastText;
+        static java.util.List<?> lastIds;
+        static java.util.Map<?, ?> lastMetadata;
+        static void send(Object context, CharSequence text, java.util.List<?> ids, java.util.Map<?, ?> metadata) {
+            calls++;
+            lastContext = context;
+            lastText = text;
+            lastIds = ids;
+            lastMetadata = metadata;
+        }
+    }
+
+    @Test public void galleryTrayTextSendsImmediatelyWhenTrayWasNotForced() {
+        FakeTraySender.calls = 0;
+        Settings.chatTrayForced = false;
+        Object ctx = new Object();
+        java.util.List<String> ids = java.util.Collections.singletonList("1");
+        java.util.Map<String, String> meta = java.util.Collections.singletonMap("k", "v");
+        Settings.galleryTrayText(ctx, FakeTraySender.class, ids, meta);
+        assertEquals(1, FakeTraySender.calls);
+        assertSame(ctx, FakeTraySender.lastContext);
+        assertNull(FakeTraySender.lastText);
+        assertSame(ids, FakeTraySender.lastIds);
+        assertSame(meta, FakeTraySender.lastMetadata);
         assertTrue(Settings.hookErrors.isEmpty());
     }
 
