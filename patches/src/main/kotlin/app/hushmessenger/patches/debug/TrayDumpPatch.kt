@@ -91,12 +91,12 @@ val trayDumpPatch = bytecodePatch(
         // Timing experiment: route 6Iy.A05's static A0E(5Re, String, List, Map) calls through Settings.trayText.
         val sender = mutableClassDefBy("LX/6Iy;")
         val a05 = sender.methods.single { it.name == "A05" && it.parameterTypes.takeLast(5).map { p -> p.toString() } == listOf("I", "Z", "Z", "Z", "Z") }
-        val a0eSig = "LX/6Iy;->A0E(LX/5Re;Ljava/lang/String;Ljava/util/List;Ljava/util/Map;)V"
+        val a0eSig = "LX/6Iy;->A0E(LX/5Re;Ljava/lang/CharSequence;Ljava/util/List;Ljava/util/Map;)V"
         val calls = a05.implementation!!.instructions.toList().withIndex().filter { (_, i) ->
             (i.opcode == Opcode.INVOKE_STATIC || i.opcode == Opcode.INVOKE_STATIC_RANGE) && (i as ReferenceInstruction).reference.toString() == a0eSig
         }
         if (calls.isEmpty()) throw PatchException("Debug tray dump: no static A0E call in 6Iy.A05")
-        val helper = "Lapp/hushmessenger/extension/Settings;->trayText(Ljava/lang/Object;Ljava/lang/String;Ljava/util/List;Ljava/util/Map;)V"
+        val helper = "Lapp/hushmessenger/extension/Settings;->trayText(Ljava/lang/Object;Ljava/lang/CharSequence;Ljava/util/List;Ljava/util/Map;)V"
         for ((idx, call) in calls) {
             val regs = when (call) {
                 is FiveRegisterInstruction -> "{" + listOf(call.registerC, call.registerD, call.registerE, call.registerF).joinToString(", ") { "v$it" } + "}"

@@ -1378,12 +1378,12 @@ public final class Settings {
      * Debug experiment (timing): the composer's trailing text send after a tray send (6Iy.A0E with no text, which reads
      * the composer's text). Where the tray is ours alone, run it 3 seconds later; otherwise at once.
      */
-    public static void trayText(Object context, String text, java.util.List<?> ids, java.util.Map<?, ?> metadata) {
+    public static void trayText(Object context, CharSequence text, java.util.List<?> ids, java.util.Map<?, ?> metadata) {
         Runnable send = () -> {
             try {
                 java.lang.reflect.Method target = null;
                 for (java.lang.reflect.Method m : Class.forName("X.6Iy").getDeclaredMethods())
-                    if (m.getName().equals("A0E") && m.getParameterTypes().length == 4 && m.getParameterTypes()[1] == String.class) target = m;
+                    if (m.getName().equals("A0E") && m.getParameterTypes().length == 4 && m.getParameterTypes()[1] == CharSequence.class) target = m;
                 target.setAccessible(true);
                 target.invoke(null, context, text, ids, metadata);
                 android.util.Log.w("HushTrayDump", "trayText: sent (text " + (text == null ? "from the composer" : "given") + ")");
