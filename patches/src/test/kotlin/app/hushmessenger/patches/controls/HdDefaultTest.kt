@@ -91,6 +91,7 @@ private fun insertBody(answer: String = "v3") = """
     invoke-interface {p0}, Ljava/util/Collection;->isEmpty()Z
     move-result v0
     if-eqz v0, :cond_1d
+    :cond_19
     :goto_19
     invoke-static {p1, $answer}, $HD_SET
     return-void
