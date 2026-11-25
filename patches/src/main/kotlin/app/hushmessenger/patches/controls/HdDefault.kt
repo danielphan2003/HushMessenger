@@ -199,11 +199,9 @@ internal fun Method.hdDefaultInsert(): HdDefaultInsert {
     if (arguments.size != 2) hdDefaultChanged("the composer's HD answer store changed")
     val answer = arguments[1]
     if (answer >= firstParameter) hdDefaultChanged("the composer's HD answer is a parameter now")
-    val literal = (0 until at).lastOrNull { code[it].opcode.setsRegister() && code[it].hdRegister() == answer }
-    if (literal == null || code[literal].opcode != Opcode.CONST_4 ||
-        (code[literal] as? NarrowLiteralInstruction)?.narrowLiteral != 0) {
-        hdDefaultChanged("the composer's HD answer no longer starts false")
-    }
+    val literal = (0 until at).any { code[it].opcode == Opcode.CONST_4 && code[it].hdRegister() == answer &&
+        (code[it] as? NarrowLiteralInstruction)?.narrowLiteral == 0 }
+    if (!literal) hdDefaultChanged("the composer's HD answer no longer starts false")
     if (code.getOrNull(at + 1)?.opcode != Opcode.RETURN) hdDefaultChanged("the composer's HD answer isn't stored last")
     val temp = (0 until firstParameter).firstOrNull { it != answer && it !in arguments }
         ?: hdDefaultChanged("the attachment preview's handler has no free register")
