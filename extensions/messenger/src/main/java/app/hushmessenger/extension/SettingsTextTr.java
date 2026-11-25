@@ -705,6 +705,8 @@ final class SettingsTextTr {
         {"call_confirm.description", "Sesli veya görüntülü arama düğmesine dokunduğunda önce sorulur, böylece yanlış bir dokunuş kimseyi aramaz. Bu, sohbetin üst çubuğunu, işletme sohbetlerini ve Yeni mesaj ekranını kapsar. Ara aramayı başlatır, İptal başlatmaz. Gelen aramalar etkilenmez."},
         {"original_photo.title", "Fotoğrafları orijinal kalitede gönder"},
         {"original_photo.description", "HD açıkken JPEG fotoğrafları küçültülmüş bir kopya yerine tam boyutlarında gönderir. Konum bilgisi yine kaldırılır. 20 MB'tan büyük fotoğraflar yine küçültülür."},
+        {"hd_default.title", "HD photos by default"},
+        {"hd_default.description", "Photos start in HD, like tapping HD yourself. If you turn HD off for a photo, Messenger remembers that until you turn it back on."},
         {"original_video.title", "Videoları yeniden kodlamadan gönder"},
         {"original_video.description", "Messenger izin verdiğinde videoyu yeniden sıkıştırılmış bir kopya yerine orijinal dosya olarak gönderir. 25 MB'tan büyük videolar ve düzenlenmiş videolar yine sıkıştırılır."},
         {"xhe_audio.title", "Gönderilmeyen videoları düzelt"},

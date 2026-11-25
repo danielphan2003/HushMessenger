@@ -81,6 +81,14 @@ object CompatMirror {
     fun rethrowOnlyWrites(code: List<*>, tryBlocks: List<*>): Set<Int> =
         static("rethrowOnlyWrites", List::class.java, List::class.java).invoke(null, code, tryBlocks) as Set<Int>
 
+    /** CompatReport.hdDefaultProblems: why HD photos by default would stop on [classes], and the targets it found. */
+    @Suppress("UNCHECKED_CAST")
+    fun hdDefault(classes: Iterable<ClassDef>): Pair<List<String>, List<String>> {
+        val targets = mutableListOf<String>()
+        val problems = static("hdDefaultProblems", List::class.java, List::class.java).invoke(null, classes.toList(), targets) as List<String>
+        return problems to targets
+    }
+
     private fun id(method: Method) = method.definingClass + "->" + method.name + "(" + method.parameterTypes.joinToString("") +
         ")" + method.returnType
 }

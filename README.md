@@ -126,6 +126,7 @@ These screenshots come from the code on this page, so they can be a step ahead o
 | Notify for restricted chats | Messages from people you've restricted notify you like any other chat, unless you've muted that chat or it's end-to-end encrypted. They still can't see when you're active or when you've read their messages. A restricted encrypted chat also drops out of your chat list, so search the person's name in Messenger and open it from the results. |
 | Use system emoji | Draws emoji with your phone's own set on Android 12 and newer. |
 | Send photos at original quality | With HD on, a JPEG photo up to 20 MB goes out at its full size instead of Messenger's smaller copy. Location and camera details are stripped, as Messenger does. |
+| HD photos by default | Photos start in HD, as if you'd tapped HD yourself. Turn HD off for a photo and Messenger remembers that until you turn it back on. |
 | Send videos without re-encoding | A video up to 25 MB goes out as it is. |
 | Fix videos that won't send | A video whose only sound is xHE-AAC gets that sound converted to regular AAC, and a Samsung screen recording loses the tag Samsung's recorder adds when Messenger's media check rejects it, so neither ends in "Unable to send". Works for videos shared in from another app and ones picked in a chat. |
 | Use the phone's camera app | A chat's camera button opens your own camera app. Ask photo or video lets it record videos too. |

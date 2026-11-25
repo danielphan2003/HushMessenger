@@ -705,6 +705,8 @@ final class SettingsTextTh {
         {"call_confirm.description", "การแตะปุ่มโทรเสียงหรือวิดีโอคอลจะถามเพื่อยืนยันก่อนเสมอ ป้องกันการเผลอแตะโทรออกโดยไม่ตั้งใจ ใช้กับแถบด้านบนของแชท แชทธุรกิจ และหน้าข้อความใหม่ แตะโทรเพื่อเริ่มสาย แตะยกเลิกเพื่อไม่โทร สายโทรเข้าไม่ได้รับผลกระทบ"},
         {"original_photo.title", "ส่งรูปภาพด้วยคุณภาพต้นฉบับ"},
         {"original_photo.description", "เมื่อเปิด HD รูปภาพ JPEG ขนาดไม่เกิน 20 MB จะส่งออกไปด้วยขนาดเต็มแทนการบีบอัดให้เล็กลงของ Messenger โดยข้อมูลตำแหน่งและกล้องจะถูกลบออกตามปกติ"},
+        {"hd_default.title", "HD photos by default"},
+        {"hd_default.description", "Photos start in HD, like tapping HD yourself. If you turn HD off for a photo, Messenger remembers that until you turn it back on."},
         {"original_video.title", "ส่งวิดีโอโดยไม่บีบอัดใหม่"},
         {"original_video.description", "วิดีโอขนาดไม่เกิน 25 MB จะส่งออกไปด้วยคุณภาพดั้งเดิมโดยไม่มีการแปลงรหัสใหม่"},
         {"xhe_audio.title", "แก้ไขวิดีโอที่ส่งไม่ไป"},

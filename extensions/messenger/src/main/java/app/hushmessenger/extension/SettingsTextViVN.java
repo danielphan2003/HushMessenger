@@ -705,6 +705,8 @@ final class SettingsTextViVN {
         {"call_confirm.description", "Khi bấm nút gọi thoại hoặc gọi video, bạn sẽ được hỏi trước để không lỡ gọi cho ai. Áp dụng cho thanh trên cùng của đoạn chat, đoạn chat với doanh nghiệp và màn hình Tin nhắn mới. Gọi sẽ bắt đầu cuộc gọi, Hủy thì không. Cuộc gọi đến không bị ảnh hưởng."},
         {"original_photo.title", "Gửi ảnh với chất lượng gốc"},
         {"original_photo.description", "Khi bật HD, hãy gửi ảnh JPEG với kích thước đầy đủ, không còn thu nhỏ nữa. Thông tin vị trí sẽ vẫn bị xóa. Ảnh lớn hơn 20 MB vẫn sẽ bị thu nhỏ."},
+        {"hd_default.title", "HD photos by default"},
+        {"hd_default.description", "Photos start in HD, like tapping HD yourself. If you turn HD off for a photo, Messenger remembers that until you turn it back on."},
         {"original_video.title", "Gửi video mà không mã hóa lại"},
         {"original_video.description", "Gửi tệp video gốc khi Messenger cho phép, thay thế phiên bản nén lại. Video lớn hơn 25 MB và video đã chỉnh sửa sẽ vẫn bị nén."},
         {"xhe_audio.title", "Khắc phục video không gửi được"},

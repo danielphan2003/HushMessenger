@@ -1491,4 +1491,125 @@ final class Media {
         found.put("font_input", inputs);
         return found;
     }
+
+    // HD photos by default (HdDefault.kt) finds its two methods by shape when it patches, so no profile records them
+    static final long HD_DEFAULT_FLAG = 0x10100bd00001191L;
+    static final String HD_TOGGLE_KEY = "hd_button_toggle_state";
+
+    static List<Integer> hdArguments(Instruction i) {
+        var registers = new ArrayList<Integer>();
+        if (i instanceof FiveRegisterInstruction f) {
+            int[] all = {f.getRegisterC(), f.getRegisterD(), f.getRegisterE(), f.getRegisterF(), f.getRegisterG()};
+            for (int k = 0; k < f.getRegisterCount(); k++) registers.add(all[k]);
+        } else if (i instanceof RegisterRangeInstruction r) {
+            for (int k = 0; k < r.getRegisterCount(); k++) registers.add(r.getStartRegister() + k);
+        }
+        return registers;
+    }
+
+    /** HdDefault.kt's gate: (FbUserSession)Z, one load of the flag, straight into a (J)Z server read whose answer it returns. */
+    static boolean hdDefaultGate(Method m) {
+        if (!m.getReturnType().equals("Z") || m.getParameterTypes().size() != 1 ||
+            !m.getParameterTypes().get(0).toString().equals(BUBBLE_SESSION)) return false;
+        var code = instructions(m);
+        int flag = -1;
+        for (int i = 0; i < code.size(); i++) {
+            if (code.get(i).getOpcode() == Opcode.CONST_WIDE && code.get(i) instanceof WideLiteralInstruction w && w.getWideLiteral() == HD_DEFAULT_FLAG) {
+                if (flag >= 0) return false;
+                flag = i;
+            }
+        }
+        if (flag < 0) return false;
+        int wide = register(code.get(flag));
+        for (int i = flag + 1; i + 2 < code.size(); i++) {
+            var insn = code.get(i);
+            if (insn instanceof ReferenceInstruction r && r.getReference() instanceof MethodReference call && call.getReturnType().equals("Z") &&
+                call.getParameterTypes().size() >= 1 && call.getParameterTypes().get(call.getParameterTypes().size() - 1).toString().equals("J")) {
+                var args = hdArguments(insn);
+                return args.size() >= 2 && args.get(args.size() - 2) == wide && args.get(args.size() - 1) == wide + 1 &&
+                    code.get(i + 1).getOpcode() == Opcode.MOVE_RESULT && code.get(i + 2).getOpcode() == Opcode.RETURN &&
+                    register(code.get(i + 1)) == register(code.get(i + 2));
+            }
+            if (insn.getOpcode().setsRegister() && (register(insn) == wide || register(insn) == wide + 1)) return false;
+        }
+        return false;
+    }
+
+    /** HdDefault.kt's read: static ()Z asking FbSharedPreferences once, with a static key and a false default, and returning it. Its key field, or null. */
+    static String hdDefaultReadKey(Method m) {
+        if (!m.getReturnType().equals("Z") || !m.getParameterTypes().isEmpty() || !AccessFlags.STATIC.isSet(m.getAccessFlags())) return null;
+        var code = instructions(m);
+        int call = -1;
+        for (int i = 0; i < code.size(); i++) {
+            if (code.get(i) instanceof ReferenceInstruction r && r.getReference() instanceof MethodReference ref &&
+                ref.getDefiningClass().equals(PREFERENCES) && ref.getReturnType().equals("Z") && ref.getParameterTypes().size() == 2 &&
+                ref.getParameterTypes().get(1).toString().equals("Z")) {
+                if (call >= 0) return null;
+                call = i;
+            }
+        }
+        if (call < 2 || call + 2 >= code.size() || code.get(call).getOpcode() != Opcode.INVOKE_INTERFACE) return null;
+        var args = hdArguments(code.get(call));
+        var literal = code.get(call - 1);
+        if (args.size() != 3 || literal.getOpcode() != Opcode.CONST_4 || register(literal) != args.get(2) || args.get(2) >= 16 ||
+            ((NarrowLiteralInstruction) literal).getNarrowLiteral() != 0) return null;
+        if (code.get(call + 1).getOpcode() != Opcode.MOVE_RESULT || code.get(call + 2).getOpcode() != Opcode.RETURN ||
+            register(code.get(call + 1)) != register(code.get(call + 2))) return null;
+        for (int i = call - 2; i >= 0; i--) {
+            var insn = code.get(i);
+            if (!insn.getOpcode().setsRegister() || register(insn) != args.get(1)) continue;
+            return insn.getOpcode() == Opcode.SGET_OBJECT ? ref(insn) : null;
+        }
+        return null;
+    }
+
+    /** What HD photos by default finds when it patches: one gate and one read of the remembered HD answer. */
+    static List<String> hdDefaultProblems(List<ClassDef> classes, List<String> targets) {
+        var problems = new ArrayList<String>();
+        var gates = new ArrayList<String>();
+        var keys = new HashSet<String>();
+        var initializers = new HashMap<String, List<Instruction>>();
+        for (ClassDef cls : classes) {
+            for (Method m : cls.getMethods()) {
+                if (hdDefaultGate(m)) gates.add(hookId(m));
+                if (!m.getName().equals("<clinit>")) continue;
+                var code = instructions(m);
+                initializers.put(cls.getType(), code);
+                for (int i = 0; i < code.size(); i++) {
+                    if (!(code.get(i) instanceof ReferenceInstruction r && r.getReference() instanceof StringReference s && s.getString().equals(HD_TOGGLE_KEY))) continue;
+                    for (int j = i + 1; j < code.size(); j++) {
+                        var op = code.get(j).getOpcode();
+                        if (op == Opcode.CONST_STRING) break;
+                        if (op == Opcode.SPUT_OBJECT) {
+                            keys.add(ref(code.get(j)));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        var reads = new ArrayList<String>();
+        for (ClassDef cls : classes) {
+            for (Method m : cls.getMethods()) {
+                String key = hdDefaultReadKey(m);
+                if (key == null) continue;
+                boolean copied = false;
+                var code = initializers.getOrDefault(cls.getType(), List.of());
+                if (key.startsWith(cls.getType() + "->")) {
+                    for (int i = 0; i + 1 < code.size(); i++) {
+                        if (code.get(i).getOpcode() == Opcode.SGET_OBJECT && keys.contains(ref(code.get(i))) &&
+                            code.get(i + 1).getOpcode() == Opcode.SPUT_OBJECT && key.equals(ref(code.get(i + 1))) &&
+                            register(code.get(i)) == register(code.get(i + 1))) copied = true;
+                    }
+                }
+                if (keys.contains(key) || copied) reads.add(hookId(m));
+            }
+        }
+        if (gates.size() == 1) targets.add("gate " + gates.get(0));
+        else problems.add("expected one method reading the HD gate's flag, found " + gates.size());
+        if (keys.isEmpty()) problems.add("the " + HD_TOGGLE_KEY + " preference key isn't made where it was");
+        if (reads.size() == 1) targets.add("read " + reads.get(0));
+        else problems.add("expected one read of the " + HD_TOGGLE_KEY + " preference, found " + reads.size());
+        return problems;
+    }
 }
