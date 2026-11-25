@@ -5,6 +5,9 @@ import app.hushmessenger.patches.controls.AUTO_REPLY_MEDIA
 import app.hushmessenger.patches.controls.INSERT_PREVIEW
 import app.hushmessenger.patches.controls.settingsExtension
 import app.morphe.patcher.extensions.InstructionExtensions.addInstructions
+import app.morphe.patcher.extensions.InstructionExtensions.replaceInstruction
+import com.android.tools.smali.dexlib2.iface.instruction.FiveRegisterInstruction
+import com.android.tools.smali.dexlib2.iface.instruction.RegisterRangeInstruction
 import app.morphe.patcher.patch.PatchException
 import app.morphe.patcher.patch.bytecodePatch
 import com.android.tools.smali.dexlib2.AccessFlags
@@ -85,5 +88,23 @@ val trayDumpPatch = bytecodePatch(
             }
         }
         if (wrapped == 0) throw PatchException("Debug tray dump: no A1O read where LX/584; is built")
+        // Timing experiment: route 6Iy.A05's static A0E(5Re, String, List, Map) calls through Settings.trayText.
+        val sender = mutableClassDefBy("LX/6Iy;")
+        val a05 = sender.methods.single { it.name == "A05" && it.parameterTypes.takeLast(5).map { p -> p.toString() } == listOf("I", "Z", "Z", "Z", "Z") }
+        val a0eSig = "LX/6Iy;->A0E(LX/5Re;Ljava/lang/String;Ljava/util/List;Ljava/util/Map;)V"
+        val calls = a05.implementation!!.instructions.toList().withIndex().filter { (_, i) ->
+            (i.opcode == Opcode.INVOKE_STATIC || i.opcode == Opcode.INVOKE_STATIC_RANGE) && (i as ReferenceInstruction).reference.toString() == a0eSig
+        }
+        if (calls.isEmpty()) throw PatchException("Debug tray dump: no static A0E call in 6Iy.A05")
+        val helper = "Lapp/hushmessenger/extension/Settings;->trayText(Ljava/lang/Object;Ljava/lang/String;Ljava/util/List;Ljava/util/Map;)V"
+        for ((idx, call) in calls) {
+            val regs = when (call) {
+                is FiveRegisterInstruction -> "{" + listOf(call.registerC, call.registerD, call.registerE, call.registerF).joinToString(", ") { "v$it" } + "}"
+                is RegisterRangeInstruction -> "{v${call.startRegister} .. v${call.startRegister + call.registerCount - 1}}"
+                else -> throw PatchException("Debug tray dump: unexpected A0E call shape")
+            }
+            val op = if (call is RegisterRangeInstruction) "invoke-static/range" else "invoke-static"
+            a05.replaceInstruction(idx, "$op $regs, $helper")
+        }
     }
 }

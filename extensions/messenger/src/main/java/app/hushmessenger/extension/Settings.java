@@ -1374,6 +1374,30 @@ public final class Settings {
         android.util.Log.w("HushTrayDump", "trayConfig: answer=" + answer + " forced=" + chatTrayForced + " -> " + result);
         return result;
     }
+    /**
+     * Debug experiment (timing): the composer's trailing text send after a tray send (6Iy.A0E with no text, which reads
+     * the composer's text). Where the tray is ours alone, run it 3 seconds later; otherwise at once.
+     */
+    public static void trayText(Object context, String text, java.util.List<?> ids, java.util.Map<?, ?> metadata) {
+        Runnable send = () -> {
+            try {
+                java.lang.reflect.Method target = null;
+                for (java.lang.reflect.Method m : Class.forName("X.6Iy").getDeclaredMethods())
+                    if (m.getName().equals("A0E") && m.getParameterTypes().length == 4 && m.getParameterTypes()[1] == String.class) target = m;
+                target.setAccessible(true);
+                target.invoke(null, context, text, ids, metadata);
+                android.util.Log.w("HushTrayDump", "trayText: sent (text " + (text == null ? "from the composer" : "given") + ")");
+            } catch (Throwable error) {
+                android.util.Log.w("HushTrayDump", "trayText failed: " + error + (error.getCause() == null ? "" : " / " + error.getCause()));
+            }
+        };
+        if (chatTrayForced && text == null) {
+            android.util.Log.w("HushTrayDump", "trayText: delaying the composer text 3 s");
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(send, 3000);
+        } else {
+            send.run();
+        }
+    }
     public static boolean traySequencedSends(boolean stock) {
         boolean answer = stock && !chatTrayForced;
         android.util.Log.w("HushTrayDump", "traySequencedSends: stock=" + stock + " forced=" + chatTrayForced + " -> " + answer);
