@@ -45,6 +45,7 @@ tasks.test {
     // The native replay holds one stock APK's dex files at a time, which outgrows the 512 MB default on 582.
     maxHeapSize = "2g"
     jvmArgs("-XX:ActiveProcessorCount=2")
+    testLogging { exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
     mustRunAfter(requireNativeFixtures)
     inputs.property("nativeFixtureRoot", nativeFixtureRoot)
     if (nativeFixtureRoot.isNotBlank()) inputs.files(fileTree(nativeFixtureRoot) { include("*.apk") })
