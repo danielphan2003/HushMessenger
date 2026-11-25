@@ -353,11 +353,14 @@ internal fun findHdDefault(classes: Iterable<ClassDef>): HdDefaultSites {
     }
     val found = reads.singleOrNull() ?: hdDefaultChanged("expected one read of the $HD_TOGGLE_KEY preference, found ${reads.size}")
     val read = found.first
-    val writes = classes.firstOrNull { it.type == read.definingClass }?.methods.orEmpty().filter { method ->
+    val holder = classes.firstOrNull { it.type == read.definingClass }
+    val writes: List<Method> = holder?.methods?.filter { method: Method ->
         method.returnType == "V" && AccessFlags.STATIC.isSet(method.accessFlags) &&
             method.parameterTypes.map(CharSequence::toString) == listOf("Z") &&
-            method.implementation?.instructions?.any { (it as? ReferenceInstruction)?.reference?.toString() == found.second } == true
-    }
+            method.implementation?.instructions?.any { instruction: Instruction ->
+                (instruction as? ReferenceInstruction)?.reference?.toString() == found.second
+            } == true
+    } ?: emptyList()
     val write = writes.singleOrNull() ?: hdDefaultChanged("expected one store of the $HD_TOGGLE_KEY preference, found ${writes.size}")
     val inserts = hdDefaultInserts.methods(classes)
     val insert = inserts.singleOrNull() ?: hdDefaultChanged("expected one handler for media inserted into the composer, found ${inserts.size}")
