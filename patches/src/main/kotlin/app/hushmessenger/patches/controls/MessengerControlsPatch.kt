@@ -987,13 +987,19 @@ val hdDefaultPatch = bytecodePatch(
         val gate = mutable(sites.gate)
         val read = mutable(sites.read)
         val insert = mutable(sites.insert)
+        val send = mutable(sites.send)
+        val toggle = mutable(sites.toggle)
         // All are checked before the first edit, so a changed build fails with the APK untouched.
         gate.validateHdDefaultGate()
         read.hdDefaultRead()
         val insertSite = insert.hdDefaultInsert()
+        val sendSite = send.hdDefaultSend()
+        val toggleSite = toggle.hdDefaultToggle()
         gate.injectHdDefaultGate()
         read.injectHdDefaultRead()
         insert.injectHdDefaultInsert(insertSite, sites.read)
+        send.injectHdDefaultSend(sendSite, sites.read)
+        toggle.injectHdDefaultToggle(toggleSite, sites.write)
         recordControl(HD_DEFAULT)
         hdDefaultApplied = true
     }

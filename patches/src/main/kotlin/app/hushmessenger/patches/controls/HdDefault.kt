@@ -17,6 +17,7 @@ import com.android.tools.smali.dexlib2.iface.instruction.NarrowLiteralInstructio
 import com.android.tools.smali.dexlib2.iface.instruction.OneRegisterInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.RegisterRangeInstruction
+import com.android.tools.smali.dexlib2.iface.instruction.TwoRegisterInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.WideLiteralInstruction
 import com.android.tools.smali.dexlib2.iface.reference.FieldReference
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference
@@ -42,14 +43,30 @@ internal const val HD_TOGGLE_KEY = "hd_button_toggle_state"
 /** The attachment preview's insert event, the one method that takes it first. */
 internal const val HD_INSERT_PREVIEW = "Lcom/facebook/xapp/messaging/composer/attachmentpreview/events/InsertAttachmentPreviewEvent;"
 
+/** The composer's own view, and the flag its send click reads. */
+internal const val HD_COMPOSER = "Lcom/facebook/messaging/composer/OneLineComposerView;"
+
+/** The composer's send click logs this before it rebuilds the attachments with the composer's HD answer. */
+internal const val HD_COMPOSER_SEND = "ComposeFragment.onSendClicked"
+
+/** The reactive props object the HD control's click handler takes first. */
+internal const val HD_REACTIVE_PROPS = "LX/4wl;"
+
 /**
- * The methods the switch changes: the server gate, the static read of the remembered answer, and the handler that files
- * a picked photo in the composer's attachment preview, whose HD answer it takes from the item's default quality.
+ * The methods the switch changes: the server gate, the static read of the remembered answer, the handler that files a
+ * picked photo in the composer's attachment preview, the composer's send click and the preview's HD toggle.
  */
-internal class HdDefaultSites(val gate: Method, val read: Method, val insert: Method)
+internal class HdDefaultSites(val gate: Method, val read: Method, val write: Method, val insert: Method,
+    val send: Method, val toggle: Method)
 
 /** The insert handler's store of the composer's HD answer: the setter call's index, its answer register, a spare local. */
 internal class HdDefaultInsert(val at: Int, val answer: Int, val temp: Int)
+
+/** The send click's view field, the view it casts to, and the HD flag it reads. */
+internal class HdDefaultSend(val viewField: FieldReference, val hd: FieldReference)
+
+/** The preview toggle's store of the flag: its index and the register holding the new answer. */
+internal class HdDefaultToggle(val at: Int, val value: Int)
 
 /** What findControls found for the switch, or why it found nothing. Null until it runs, and again after the patch run. */
 internal var hdDefaultSearch: Result<HdDefaultSites>? = null
@@ -225,6 +242,103 @@ internal fun MutableMethod.injectHdDefaultInsert(site: HdDefaultInsert, read: Me
     """.trimIndent(), ExternalLabel("store", getInstruction(site.at)))
 }
 
+/** Every method that logs the composer's send click. findControls answers it from its shared walk. */
+internal val hdDefaultComposerSends = MethodCheck { loadsString(HD_COMPOSER_SEND)() }
+
+/** Every reactive click handler with the preview HD toggle's signature. */
+internal val hdDefaultToggles = methodCheck { _, method ->
+    method.returnType == "Ljava/lang/Object;" &&
+        method.parameterTypes.map(CharSequence::toString) == listOf(HD_REACTIVE_PROPS, "Ljava/lang/Object;") &&
+        runCatching { method.hdDefaultToggle() }.isSuccess
+}
+
+/**
+ * The composer's send click: a static void method that logs [HD_COMPOSER_SEND], loads the composer view from its chat
+ * argument and reads the view's HD flag. The hook needs two spare locals at the top, so this refuses a method without.
+ */
+internal fun Method.hdDefaultSend(): HdDefaultSend {
+    val code = hdCode()
+    if (returnType != "V" || !AccessFlags.STATIC.isSet(accessFlags) || parameterTypes.size != 1) {
+        hdDefaultChanged("the composer send's signature changed (${hookId()})")
+    }
+    val reads = code.indices.filter { i ->
+        code[i].opcode == Opcode.IGET_BOOLEAN &&
+            (code[i].hdRef() as? FieldReference)?.let { it.type == "Z" && it.definingClass == HD_COMPOSER } == true
+    }
+    val read = reads.singleOrNull() ?: hdDefaultChanged("expected one read of the composer's HD flag, found ${reads.size}")
+    val field = code[read].hdRef() as FieldReference
+    val viewRegister = (code[read] as? TwoRegisterInstruction)?.registerB
+        ?: hdDefaultChanged("the composer's HD flag read changed")
+    val cast = (read - 1 downTo 0).firstOrNull {
+        code[it].opcode == Opcode.CHECK_CAST && code[it].hdRef().toString() == HD_COMPOSER && code[it].hdRegister() == viewRegister
+    } ?: hdDefaultChanged("the composer send no longer casts its view")
+    val view = (cast - 1 downTo 0).firstOrNull { i ->
+        code[i].opcode == Opcode.IGET_OBJECT && code[i].hdRegister() == viewRegister &&
+            (code[i].hdRef() as? FieldReference)?.definingClass == parameterTypes[0].toString()
+    } ?: hdDefaultChanged("the composer send no longer loads its view from the chat")
+    if ((code[view] as? TwoRegisterInstruction)?.registerB != parameterRegister(0)) {
+        hdDefaultChanged("the composer send's view field moved")
+    }
+    if (parameterRegister(0) < 2) hdDefaultChanged("the composer send has no free register")
+    val addresses = code.runningFold(0) { address, instruction -> address + instruction.codeUnits }
+    if (implementation!!.tryBlocks.any { 0 - it.startCodeAddress in 0 until it.codeUnitCount }) {
+        hdDefaultChanged("the composer send starts in a try block")
+    }
+    return HdDefaultSend(code[view].hdRef() as FieldReference, field)
+}
+
+/**
+ * The preview's HD toggle: one boolean field read into a register, inverted there, and stored back to the same field.
+ * The store's register is the new answer, which the hook hands to the remembered preference.
+ */
+internal fun Method.hdDefaultToggle(): HdDefaultToggle {
+    if (returnType != "Ljava/lang/Object;" ||
+        parameterTypes.map(CharSequence::toString) != listOf(HD_REACTIVE_PROPS, "Ljava/lang/Object;")) {
+        hdDefaultChanged("the preview's HD toggle signature changed (${hookId()})")
+    }
+    val code = hdCode()
+    val writes = code.indices.filter { i ->
+        val field = code[i].hdRef() as? FieldReference ?: return@filter false
+        if (code[i].opcode != Opcode.IPUT_BOOLEAN || field.type != "Z") return@filter false
+        val value = code[i].hdRegister() ?: return@filter false
+        val target = (code[i] as? TwoRegisterInstruction)?.registerB ?: return@filter false
+        (0 until i).any { j ->
+            code[j].opcode == Opcode.IGET_BOOLEAN && code[j].hdRegister() == value &&
+                code[j].hdRef().toString() == field.toString() && (code[j] as? TwoRegisterInstruction)?.registerB == target &&
+                (j + 1 until i).any { code[it].opcode == Opcode.XOR_INT_LIT8 && code[it].hdRegister() == value }
+        }
+    }
+    val at = writes.singleOrNull() ?: hdDefaultChanged("expected one toggle of the composer's HD flag, found ${writes.size}")
+    val value = code[at].hdRegister()!!
+    if (value >= parameterRegister(0)) hdDefaultChanged("the preview's HD toggle answers from a parameter")
+    val addresses = code.runningFold(0) { address, instruction -> address + instruction.codeUnits }
+    if (implementation!!.tryBlocks.any { addresses[at] - it.startCodeAddress in 0 until it.codeUnitCount }) {
+        hdDefaultChanged("the preview's HD toggle sits in a try block")
+    }
+    return HdDefaultToggle(at, value)
+}
+
+/** While the switch is on, the composer's send reads the remembered answer instead of the picker's stale default. */
+internal fun MutableMethod.injectHdDefaultSend(site: HdDefaultSend, read: Method) {
+    addInstructionsWithLabels(0, """
+        iget-object v0, p0, ${site.viewField}
+        if-eqz v0, :stock
+        check-cast v0, $HD_COMPOSER
+        const-string v1, "$HD_DEFAULT"
+        invoke-static {v1}, $SETTINGS->enabled(Ljava/lang/String;)Z
+        move-result v1
+        if-eqz v1, :stock
+        invoke-static {}, ${read.definingClass}->${read.name}()Z
+        move-result v1
+        iput-boolean v1, v0, ${site.hd}
+    """.trimIndent(), ExternalLabel("stock", getInstruction(0)))
+}
+
+/** A toggle in the full preview is the remembered answer from then on, even when the photo is sent from the chat. */
+internal fun MutableMethod.injectHdDefaultToggle(site: HdDefaultToggle, write: Method) {
+    addInstructions(site.at + 1, "invoke-static {v${site.value}}, ${write.definingClass}->${write.name}(Z)V")
+}
+
 /** Both methods, each found exactly once, or a PatchException saying which one isn't. */
 internal fun findHdDefault(classes: Iterable<ClassDef>): HdDefaultSites {
     val gates = hdDefaultFlagReaders.methods(classes)
@@ -233,15 +347,28 @@ internal fun findHdDefault(classes: Iterable<ClassDef>): HdDefaultSites {
     val keyType = hdKeyType()
     val keys = hdDefaultKeyMakers.methods(classes).flatMap { it.hdKeyFields(keyType) }.toSet()
     if (keys.isEmpty()) hdDefaultChanged("the $HD_TOGGLE_KEY preference key isn't made where it was")
-    val reads = hdDefaultPreferenceReads.sites(classes).filter { (cls, method) ->
-        val field = runCatching { method.hdDefaultRead().second }.getOrNull() ?: return@filter false
-        field in keys || (field.substringBefore("->") == cls.type && hdCopiesKey(cls, field, keys))
-    }.map { it.second }
-    val read = reads.singleOrNull() ?: hdDefaultChanged("expected one read of the $HD_TOGGLE_KEY preference, found ${reads.size}")
+    val reads = hdDefaultPreferenceReads.sites(classes).mapNotNull { (cls, method) ->
+        val field = runCatching { method.hdDefaultRead().second }.getOrNull() ?: return@mapNotNull null
+        if (field in keys || (field.substringBefore("->") == cls.type && hdCopiesKey(cls, field, keys))) method to field else null
+    }
+    val found = reads.singleOrNull() ?: hdDefaultChanged("expected one read of the $HD_TOGGLE_KEY preference, found ${reads.size}")
+    val read = found.first
+    val writes = classes.firstOrNull { it.type == read.definingClass }?.methods.orEmpty().filter { method ->
+        method.returnType == "V" && AccessFlags.STATIC.isSet(method.accessFlags) &&
+            method.parameterTypes.map(CharSequence::toString) == listOf("Z") &&
+            method.implementation?.instructions?.any { (it as? ReferenceInstruction)?.reference?.toString() == found.second } == true
+    }
+    val write = writes.singleOrNull() ?: hdDefaultChanged("expected one store of the $HD_TOGGLE_KEY preference, found ${writes.size}")
     val inserts = hdDefaultInserts.methods(classes)
     val insert = inserts.singleOrNull() ?: hdDefaultChanged("expected one handler for media inserted into the composer, found ${inserts.size}")
     insert.hdDefaultInsert()
-    return HdDefaultSites(gate, read, insert)
+    val sends = hdDefaultComposerSends.methods(classes)
+    val send = sends.singleOrNull() ?: hdDefaultChanged("expected one composer send, found ${sends.size}")
+    send.hdDefaultSend()
+    val toggles = hdDefaultToggles.methods(classes)
+    val toggle = toggles.singleOrNull() ?: hdDefaultChanged("expected one preview HD toggle, found ${toggles.size}")
+    toggle.hdDefaultToggle()
+    return HdDefaultSites(gate, read, write, insert, send, toggle)
 }
 
 /** While the switch is on, the gate answers yes before it asks the server. */

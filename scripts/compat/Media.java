@@ -1496,6 +1496,9 @@ final class Media {
     static final long HD_DEFAULT_FLAG = 0x10100bd00001191L;
     static final String HD_TOGGLE_KEY = "hd_button_toggle_state";
     static final String HD_INSERT_PREVIEW = "Lcom/facebook/xapp/messaging/composer/attachmentpreview/events/InsertAttachmentPreviewEvent;";
+    static final String HD_COMPOSER = "Lcom/facebook/messaging/composer/OneLineComposerView;";
+    static final String HD_COMPOSER_SEND = "ComposeFragment.onSendClicked";
+    static final String HD_REACTIVE_PROPS = "LX/4wl;";
 
     static List<Integer> hdArguments(Instruction i) {
         var registers = new ArrayList<Integer>();
@@ -1593,17 +1596,67 @@ final class Media {
         return calls == 1;
     }
 
-    /** What HD photos by default finds when it patches: one gate, one read of the remembered HD answer and one insert handler. */
+    /** HdDefault.kt's store: the static (Z)V method in the read's class that names the remembered key. */
+    static boolean hdDefaultWrite(Method m, String readClass, String key) {
+        if (!m.getDefiningClass().equals(readClass) || !m.getReturnType().equals("V") ||
+            !AccessFlags.STATIC.isSet(m.getAccessFlags()) || m.getParameterTypes().size() != 1 ||
+            !m.getParameterTypes().get(0).toString().equals("Z")) return false;
+        return instructions(m).stream().anyMatch(i -> key.equals(ref(i)));
+    }
+
+    /** HdDefault.kt's send: static void with one parameter, the send log line and one read of the composer's HD flag. */
+    static boolean hdDefaultSend(Method m) {
+        if (!m.getReturnType().equals("V") || !AccessFlags.STATIC.isSet(m.getAccessFlags()) ||
+            m.getParameterTypes().size() != 1) return false;
+        boolean logged = false;
+        int reads = 0;
+        for (var i : instructions(m)) {
+            if (i instanceof ReferenceInstruction r && r.getReference() instanceof StringReference sr &&
+                sr.getString().equals(HD_COMPOSER_SEND)) logged = true;
+            if (i.getOpcode() == Opcode.IGET_BOOLEAN && i instanceof ReferenceInstruction r &&
+                r.getReference() instanceof FieldReference f && f.getDefiningClass().equals(HD_COMPOSER) &&
+                f.getType().equals("Z")) reads++;
+        }
+        return logged && reads == 1;
+    }
+
+    /** HdDefault.kt's toggle: the reactive click handler that inverts and stores its boolean field. */
+    static boolean hdDefaultToggle(Method m) {
+        if (!m.getReturnType().equals("Ljava/lang/Object;") || m.getParameterTypes().size() != 2 ||
+            !m.getParameterTypes().get(0).toString().equals(HD_REACTIVE_PROPS) ||
+            !m.getParameterTypes().get(1).toString().equals("Ljava/lang/Object;")) return false;
+        var code = instructions(m);
+        for (int i = 0; i < code.size(); i++) {
+            if (code.get(i).getOpcode() != Opcode.IPUT_BOOLEAN || !(code.get(i) instanceof ReferenceInstruction ri) ||
+                !(ri.getReference() instanceof FieldReference f) || !f.getType().equals("Z")) continue;
+            int value = register(code.get(i));
+            int target = ((TwoRegisterInstruction) code.get(i)).getRegisterB();
+            for (int j = 0; j < i; j++) {
+                if (code.get(j).getOpcode() != Opcode.IGET_BOOLEAN || register(code.get(j)) != value ||
+                    !ref(code.get(j)).equals(f.toString()) ||
+                    ((TwoRegisterInstruction) code.get(j)).getRegisterB() != target) continue;
+                for (int k = j + 1; k < i; k++)
+                    if (code.get(k).getOpcode() == Opcode.XOR_INT_LIT8 && register(code.get(k)) == value) return true;
+            }
+        }
+        return false;
+    }
+
+    /** What HD photos by default finds when it patches: one gate, read, store, insert handler, send click and toggle. */
     static List<String> hdDefaultProblems(List<ClassDef> classes, List<String> targets) {
         var problems = new ArrayList<String>();
         var gates = new ArrayList<String>();
         var inserts = new ArrayList<String>();
+        var sends = new ArrayList<String>();
+        var toggles = new ArrayList<String>();
         var keys = new HashSet<String>();
         var initializers = new HashMap<String, List<Instruction>>();
         for (ClassDef cls : classes) {
             for (Method m : cls.getMethods()) {
                 if (hdDefaultGate(m)) gates.add(hookId(m));
                 if (hdDefaultInsert(m)) inserts.add(hookId(m));
+                if (hdDefaultSend(m)) sends.add(hookId(m));
+                if (hdDefaultToggle(m)) toggles.add(hookId(m));
                 if (!m.getName().equals("<clinit>")) continue;
                 var code = instructions(m);
                 initializers.put(cls.getType(), code);
@@ -1620,7 +1673,8 @@ final class Media {
                 }
             }
         }
-        var reads = new ArrayList<String>();
+        var reads = new ArrayList<Method>();
+        var readKeys = new HashMap<String, String>();
         for (ClassDef cls : classes) {
             for (Method m : cls.getMethods()) {
                 String key = hdDefaultReadKey(m);
@@ -1634,16 +1688,36 @@ final class Media {
                             register(code.get(i)) == register(code.get(i + 1))) copied = true;
                     }
                 }
-                if (keys.contains(key) || copied) reads.add(hookId(m));
+                if (keys.contains(key) || copied) {
+                    reads.add(m);
+                    readKeys.put(hookId(m), key);
+                }
+            }
+        }
+        var writes = new ArrayList<String>();
+        if (reads.size() == 1) {
+            var read = reads.get(0);
+            String key = readKeys.get(hookId(read));
+            for (ClassDef cls : classes) {
+                if (!cls.getType().equals(read.getDefiningClass())) continue;
+                for (Method m : cls.getMethods()) if (hdDefaultWrite(m, read.getDefiningClass(), key)) writes.add(hookId(m));
             }
         }
         if (gates.size() == 1) targets.add("gate " + gates.get(0));
         else problems.add("expected one method reading the HD gate's flag, found " + gates.size());
         if (keys.isEmpty()) problems.add("the " + HD_TOGGLE_KEY + " preference key isn't made where it was");
-        if (reads.size() == 1) targets.add("read " + reads.get(0));
+        if (reads.size() == 1) targets.add("read " + hookId(reads.get(0)));
         else problems.add("expected one read of the " + HD_TOGGLE_KEY + " preference, found " + reads.size());
+        if (reads.size() == 1) {
+            if (writes.size() == 1) targets.add("write " + writes.get(0));
+            else problems.add("expected one store of the " + HD_TOGGLE_KEY + " preference, found " + writes.size());
+        }
         if (inserts.size() == 1) targets.add("insert " + inserts.get(0));
         else problems.add("expected one handler for media inserted into the composer, found " + inserts.size());
+        if (sends.size() == 1) targets.add("send " + sends.get(0));
+        else problems.add("expected one composer send, found " + sends.size());
+        if (toggles.size() == 1) targets.add("toggle " + toggles.get(0));
+        else problems.add("expected one preview HD toggle, found " + toggles.size());
         return problems;
     }
 }

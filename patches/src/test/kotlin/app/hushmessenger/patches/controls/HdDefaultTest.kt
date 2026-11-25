@@ -11,6 +11,7 @@ import com.android.tools.smali.dexlib2.iface.instruction.NarrowLiteralInstructio
 import com.android.tools.smali.dexlib2.iface.instruction.OneRegisterInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
 import com.android.tools.smali.dexlib2.iface.reference.StringReference
+import com.android.tools.smali.dexlib2.immutable.ImmutableField
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -30,6 +31,16 @@ private const val INSERT_EVENT = "Lcom/facebook/xapp/messaging/composer/attachme
 private const val HD_BOX = "LX/5K7;"
 private const val INSERT = "$INSERT_CLASS->A0B($INSERT_EVENT$HD_BOX" + "Ljava/util/List;Z)V"
 private const val HD_SET = "$HD_BOX->A01($HD_BOX" + "Z)V"
+private const val HD_WRITE = "$HOLDER->A00(Z)V"
+private const val HD_SEND = "ComposeFragment.onSendClicked"
+private const val COMPOSER = "Lcom/facebook/messaging/composer/OneLineComposerView;"
+private const val SEND_CLASS = "LX/4Dl;"
+private const val SEND_FIELD = "$SEND_CLASS->A06:LX/6f3;"
+private const val SEND = "$SEND_CLASS->A0K($SEND_CLASS)V"
+private const val TOGGLE_CLASS = "LX/VC9;"
+private const val UKL = "LX/UKl;"
+private const val PROPS = "LX/4wl;"
+private const val TOGGLE = "$TOGGLE_CLASS->AeD($PROPS" + "Ljava/lang/Object;)Ljava/lang/Object;"
 private val STATIC = AccessFlags.PUBLIC.value or AccessFlags.STATIC.value
 private val CLASS_INIT = AccessFlags.STATIC.value or AccessFlags.CONSTRUCTOR.value
 
@@ -111,6 +122,47 @@ private fun insertBody(answer: String = "v3") = """
     goto :goto_19
 """.trimIndent()
 
+/** The writer as 587 stores it: the preferences editor takes the remembered key and the answer. */
+private val WRITE_BODY = """
+    sget-object v0, $HOLDER->A00:LX/2zo;
+    invoke-static {v0}, LX/2zo;->A0A(LX/2zo;)LX/5kF;
+    move-result-object v1
+    sget-object v0, $HOLDER->A03:LX/1BK;
+    invoke-static {v1, v0, p0}, LX/18B;->A1K(LX/5kF;LX/1BK;Z)V
+    return-void
+""".trimIndent()
+
+/** The composer's send click as 587 writes it: the log line, the chat's view, and the HD flag it reads. */
+private fun sendBody() = """
+    const-string v1, "$HD_SEND"
+    const v0, -0xeca455
+    invoke-static {v1, v0}, LX/0DQ;->A05(Ljava/lang/String;I)V
+    iget-object v0, p0, $SEND_FIELD
+    if-eqz v0, :cond_9
+    check-cast v0, $COMPOSER
+    iget-boolean v4, v0, $COMPOSER->A18:Z
+    sget-object v1, LX/A0i;->A04:LX/A0i;
+    :cond_9
+    return-void
+""".trimIndent()
+
+/** The preview's HD toggle as 587 writes it: the stored flag inverted and stored back. */
+private fun toggleBody() = """
+    iget-object v3, p0, $TOGGLE_CLASS->A00:LX/Txk;
+    iget-boolean v0, p0, $TOGGLE_CLASS->A01:Z
+    xor-int/lit8 v2, v0, 0x1
+    iget-object v0, v3, LX/Txk;->A05:LX/VH2;
+    iget-object v1, v0, LX/VH2;->A0M:$UKL
+    iget-boolean v0, v1, $UKL->A01:Z
+    xor-int/lit8 v0, v0, 0x1
+    iput-boolean v0, v1, $UKL->A01:Z
+    const/4 v0, 0x0
+    return-object v0
+""".trimIndent()
+
+private fun field(owner: String, name: String, type: String) =
+    ImmutableField(owner, name, type, AccessFlags.PUBLIC.value, null, null, null)
+
 private fun hdFixture(
     gate: String = gateBody(),
     read: String = readBody(),
@@ -123,10 +175,16 @@ private fun hdFixture(
     fixtureClass(HOLDER, listOf(
         fixtureMethod("$HOLDER-><clinit>()V", HOLDER_INIT, registers = 1, flags = CLASS_INIT),
         fixtureMethod(HD_READ, read, registers = 3, flags = STATIC),
+        fixtureMethod(HD_WRITE, WRITE_BODY, registers = 3, flags = STATIC),
         // The clicked key is read the same way, and must not be taken for the remembered answer.
         fixtureMethod("$HOLDER->A02()Z", readBody(field = "$HOLDER->A02:LX/1BK;"), registers = 3, flags = STATIC),
     )),
     fixtureClass(INSERT_CLASS, listOf(fixtureMethod(INSERT, insert, registers = 10, flags = STATIC))),
+    fixtureClass(SEND_CLASS, listOf(fixtureMethod(SEND, sendBody(), registers = 15, flags = STATIC)),
+        extraFields = listOf(field(SEND_CLASS, "A06", "LX/6f3;"))),
+    fixtureClass(COMPOSER, extraFields = listOf(field(COMPOSER, "A18", "Z"))),
+    fixtureClass(UKL, extraFields = listOf(field(UKL, "A01", "Z"), field(UKL, "A02", "Z"))),
+    fixtureClass(TOGGLE_CLASS, listOf(fixtureMethod(TOGGLE, toggleBody(), registers = 7))),
 ) + extra
 
 private fun List<MutableClass>.method(id: String): MutableMethod =
@@ -141,17 +199,51 @@ class HdDefaultTest {
         hdDefaultSearch = null
     }
 
-    @Test fun findsTheGateTheReadAndTheInsertOfTheRememberedAnswer() {
+    @Test fun findsEveryMethodTheSwitchChanges() {
         val classes = hdFixture()
         val sites = findHdDefault(classes)
         assertEquals(HD_GATE, sites.gate.hookId())
         assertEquals(HD_READ, sites.read.hookId())
+        assertEquals(HD_WRITE, sites.write.hookId())
         assertEquals(INSERT, sites.insert.hookId())
-        // findControls finds the same three from its shared walk, and CompatReport agrees.
+        assertEquals(SEND, sites.send.hookId())
+        assertEquals(TOGGLE, sites.toggle.hookId())
+        // findControls finds the same six from its shared walk, and CompatReport agrees.
         findControls(classes)
         val found = hdDefaultSearch!!.getOrThrow()
-        assertEquals(listOf(HD_GATE, HD_READ, INSERT), listOf(found.gate.hookId(), found.read.hookId(), found.insert.hookId()))
-        assertEquals(emptyList<String>() to listOf("gate $HD_GATE", "read $HD_READ", "insert $INSERT"), CompatMirror.hdDefault(classes))
+        assertEquals(listOf(HD_GATE, HD_READ, HD_WRITE, INSERT, SEND, TOGGLE),
+            listOf(found.gate.hookId(), found.read.hookId(), found.write.hookId(), found.insert.hookId(), found.send.hookId(), found.toggle.hookId()))
+        assertEquals(emptyList<String>() to listOf("gate $HD_GATE", "read $HD_READ", "write $HD_WRITE", "insert $INSERT", "send $SEND", "toggle $TOGGLE"),
+            CompatMirror.hdDefault(classes))
+    }
+
+    @Test fun theComposerSendReadsTheRememberedAnswer() {
+        val classes = hdFixture()
+        val send = classes.method(SEND)
+        send.injectHdDefaultSend(send.hdDefaultSend(), classes.method(HD_READ))
+        val code = send.code()
+        assertEquals("$SEND_CLASS->A06:LX/6f3;", code[0].reference())
+        assertEquals(Opcode.IF_EQZ, code[1].opcode)
+        assertEquals(Opcode.CHECK_CAST, code[2].opcode)
+        assertEquals(HD_DEFAULT, ((code[3] as ReferenceInstruction).reference as StringReference).string)
+        assertEquals("$SETTINGS->enabled(Ljava/lang/String;)Z", code[4].reference())
+        assertEquals(Opcode.IF_EQZ, code[6].opcode)
+        assertEquals("$HOLDER->A01()Z", code[7].reference())
+        assertEquals(Opcode.IPUT_BOOLEAN, code[9].opcode)
+        assertEquals("$COMPOSER->A18:Z", code[9].reference())
+        // The stock send follows untouched, where both off branches land.
+        assertEquals(HD_SEND, ((code[10] as ReferenceInstruction).reference as StringReference).string)
+    }
+
+    @Test fun thePreviewToggleStoresTheRememberedAnswer() {
+        val classes = hdFixture()
+        val toggle = classes.method(TOGGLE)
+        toggle.injectHdDefaultToggle(toggle.hdDefaultToggle(), classes.method(HD_WRITE))
+        val code = toggle.code()
+        val store = code.indexOfFirst { it.opcode == Opcode.IPUT_BOOLEAN && it.reference() == "$UKL->A01:Z" }
+        assertTrue(store >= 0)
+        assertEquals(HD_WRITE, code[store + 1].reference())
+        assertEquals(store, 7)
     }
 
     @Test fun theComposerStartsFromTheRememberedAnswerToo() {
