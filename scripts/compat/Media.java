@@ -1495,7 +1495,7 @@ final class Media {
     // HD photos by default (HdDefault.kt) finds its three methods by shape when it patches, so no profile records them
     static final long HD_DEFAULT_FLAG = 0x10100bd00001191L;
     static final String HD_TOGGLE_KEY = "hd_button_toggle_state";
-    static final String INSERT_PREVIEW = "Lcom/facebook/xapp/messaging/composer/attachmentpreview/events/InsertAttachmentPreviewEvent;";
+    static final String HD_INSERT_PREVIEW = "Lcom/facebook/xapp/messaging/composer/attachmentpreview/events/InsertAttachmentPreviewEvent;";
 
     static List<Integer> hdArguments(Instruction i) {
         var registers = new ArrayList<Integer>();
@@ -1567,7 +1567,7 @@ final class Media {
     /** HdDefault.kt's insert handler: static void with the insert event first, one store of its HD answer from a local that starts false. */
     static boolean hdDefaultInsert(Method m) {
         if (!m.getReturnType().equals("V") || !AccessFlags.STATIC.isSet(m.getAccessFlags()) ||
-            m.getParameterTypes().isEmpty() || !m.getParameterTypes().get(0).toString().equals(INSERT_PREVIEW)) return false;
+            m.getParameterTypes().isEmpty() || !m.getParameterTypes().get(0).toString().equals(HD_INSERT_PREVIEW)) return false;
         var code = instructions(m);
         var params = new ArrayList<String>();
         for (var p : m.getParameterTypes()) params.add(p.toString());
