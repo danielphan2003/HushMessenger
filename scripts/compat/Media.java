@@ -1492,9 +1492,10 @@ final class Media {
         return found;
     }
 
-    // HD photos by default (HdDefault.kt) finds its two methods by shape when it patches, so no profile records them
+    // HD photos by default (HdDefault.kt) finds its three methods by shape when it patches, so no profile records them
     static final long HD_DEFAULT_FLAG = 0x10100bd00001191L;
     static final String HD_TOGGLE_KEY = "hd_button_toggle_state";
+    static final String HD_INSERT_PREVIEW = "Lcom/facebook/xapp/messaging/composer/attachmentpreview/events/InsertAttachmentPreviewEvent;";
 
     static List<Integer> hdArguments(Instruction i) {
         var registers = new ArrayList<Integer>();
@@ -1563,15 +1564,46 @@ final class Media {
         return null;
     }
 
-    /** What HD photos by default finds when it patches: one gate and one read of the remembered HD answer. */
+    /** HdDefault.kt's insert handler: static void with the insert event first, one store of its HD answer from a local that starts false. */
+    static boolean hdDefaultInsert(Method m) {
+        if (!m.getReturnType().equals("V") || !AccessFlags.STATIC.isSet(m.getAccessFlags()) ||
+            m.getParameterTypes().isEmpty() || !m.getParameterTypes().get(0).toString().equals(HD_INSERT_PREVIEW)) return false;
+        var code = instructions(m);
+        var params = new ArrayList<String>();
+        for (var p : m.getParameterTypes()) params.add(p.toString());
+        int calls = 0;
+        for (int i = 0; i < code.size(); i++) {
+            if (code.get(i).getOpcode() != Opcode.INVOKE_STATIC || !(code.get(i) instanceof ReferenceInstruction r) ||
+                !(r.getReference() instanceof MethodReference call)) continue;
+            if (!call.getReturnType().equals("V") || call.getParameterTypes().size() != 2 ||
+                !call.getParameterTypes().get(1).toString().equals("Z") ||
+                !params.contains(call.getParameterTypes().get(0).toString())) continue;
+            var args = hdArguments(code.get(i));
+            if (args.size() != 2 || args.get(1) >= parameterRegister(m, 0) || i + 1 >= code.size() ||
+                code.get(i + 1).getOpcode() != Opcode.RETURN_VOID) return false;
+            int answer = args.get(1);
+            boolean startsFalse = false;
+            for (int j = 0; j < i; j++) {
+                if (code.get(j).getOpcode() == Opcode.CONST_4 && register(code.get(j)) == answer &&
+                    ((NarrowLiteralInstruction) code.get(j)).getNarrowLiteral() == 0) startsFalse = true;
+            }
+            if (!startsFalse) return false;
+            calls++;
+        }
+        return calls == 1;
+    }
+
+    /** What HD photos by default finds when it patches: one gate, one read of the remembered HD answer and one insert handler. */
     static List<String> hdDefaultProblems(List<ClassDef> classes, List<String> targets) {
         var problems = new ArrayList<String>();
         var gates = new ArrayList<String>();
+        var inserts = new ArrayList<String>();
         var keys = new HashSet<String>();
         var initializers = new HashMap<String, List<Instruction>>();
         for (ClassDef cls : classes) {
             for (Method m : cls.getMethods()) {
                 if (hdDefaultGate(m)) gates.add(hookId(m));
+                if (hdDefaultInsert(m)) inserts.add(hookId(m));
                 if (!m.getName().equals("<clinit>")) continue;
                 var code = instructions(m);
                 initializers.put(cls.getType(), code);
@@ -1610,6 +1642,8 @@ final class Media {
         if (keys.isEmpty()) problems.add("the " + HD_TOGGLE_KEY + " preference key isn't made where it was");
         if (reads.size() == 1) targets.add("read " + reads.get(0));
         else problems.add("expected one read of the " + HD_TOGGLE_KEY + " preference, found " + reads.size());
+        if (inserts.size() == 1) targets.add("insert " + inserts.get(0));
+        else problems.add("expected one handler for media inserted into the composer, found " + inserts.size());
         return problems;
     }
 }
