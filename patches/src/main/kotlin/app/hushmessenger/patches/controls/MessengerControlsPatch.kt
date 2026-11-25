@@ -986,11 +986,14 @@ val hdDefaultPatch = bytecodePatch(
         fun mutable(found: Method) = mutableClassDefBy(found.definingClass).methods.single { it.hookId() == found.hookId() }
         val gate = mutable(sites.gate)
         val read = mutable(sites.read)
-        // Both are checked before the first edit, so a changed build fails with the APK untouched.
+        val insert = mutable(sites.insert)
+        // All are checked before the first edit, so a changed build fails with the APK untouched.
         gate.validateHdDefaultGate()
         read.hdDefaultRead()
+        val insertSite = insert.hdDefaultInsert()
         gate.injectHdDefaultGate()
         read.injectHdDefaultRead()
+        insert.injectHdDefaultInsert(insertSite, sites.read)
         recordControl(HD_DEFAULT)
         hdDefaultApplied = true
     }

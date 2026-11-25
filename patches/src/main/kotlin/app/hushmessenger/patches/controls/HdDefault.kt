@@ -19,6 +19,7 @@ import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.RegisterRangeInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.WideLiteralInstruction
 import com.android.tools.smali.dexlib2.iface.reference.FieldReference
+import com.android.tools.smali.dexlib2.iface.reference.MethodReference
 import com.android.tools.smali.dexlib2.iface.reference.StringReference
 
 /**
@@ -27,8 +28,8 @@ import com.android.tools.smali.dexlib2.iface.reference.StringReference
  * reads false until it's set. With the switch on, the gate answers yes and the unset preference reads true, so HD starts
  * on, and a photo you send with HD off stores false, which then holds until you turn HD on again.
  *
- * It finds both methods by what they do instead of by name, so no profile records them, the way the Material You theme
- * finds its targets. scripts/compat/Media.java's hdDefaultProblems looks for the same two methods.
+ * It finds each method by what it does instead of by name, so no profile records them, the way the Material You theme
+ * finds its targets. scripts/compat/Media.java's hdDefaultProblems looks for the same three methods.
  */
 internal const val HD_DEFAULT = "hd_default"
 
@@ -38,8 +39,17 @@ internal const val HD_DEFAULT_FLAG = 0x10100bd00001191L
 /** The preference key the remembered HD answer is stored under. */
 internal const val HD_TOGGLE_KEY = "hd_button_toggle_state"
 
-/** The two methods the switch changes: the server gate, and the static read of the remembered answer. */
-internal class HdDefaultSites(val gate: Method, val read: Method)
+/** The attachment preview's insert event, the one method that takes it first. */
+internal const val INSERT_PREVIEW = "Lcom/facebook/xapp/messaging/composer/attachmentpreview/events/InsertAttachmentPreviewEvent;"
+
+/**
+ * The methods the switch changes: the server gate, the static read of the remembered answer, and the handler that files
+ * a picked photo in the composer's attachment preview, whose HD answer it takes from the item's default quality.
+ */
+internal class HdDefaultSites(val gate: Method, val read: Method, val insert: Method)
+
+/** The insert handler's store of the composer's HD answer: the setter call's index, its answer register, a spare local. */
+internal class HdDefaultInsert(val at: Int, val answer: Int, val temp: Int)
 
 /** What findControls found for the switch, or why it found nothing. Null until it runs, and again after the patch run. */
 internal var hdDefaultSearch: Result<HdDefaultSites>? = null
@@ -163,6 +173,60 @@ private fun hdCopiesKey(cls: ClassDef, field: String, keys: Set<String>): Boolea
     }
 }
 
+/** Every static void method whose first parameter is the attachment preview's insert event. */
+internal val hdDefaultInserts = methodCheck { _, method ->
+    method.returnType == "V" && AccessFlags.STATIC.isSet(method.accessFlags) &&
+        method.parameterTypes.firstOrNull()?.toString() == INSERT_PREVIEW
+}
+
+/**
+ * The insert handler's store of the composer's HD answer: one call to a static `(box, Z)V` setter, the box among the
+ * handler's parameters and a local register as the answer, which starts false and is set true on the HD branch. The
+ * hook needs one more local it may clobber, so this refuses a handler that has none.
+ */
+internal fun Method.hdDefaultInsert(): HdDefaultInsert {
+    val code = hdCode()
+    val params = parameterTypes.map(CharSequence::toString)
+    val firstParameter = parameterRegister(0)
+    val calls = code.indices.filter { i ->
+        val call = code[i].hdRef() as? MethodReference ?: return@filter false
+        val types = call.parameterTypes.map(CharSequence::toString)
+        code[i].opcode == Opcode.INVOKE_STATIC && call.returnType == "V" && types.size == 2 && types[1] == "Z" &&
+            types[0] in params
+    }
+    val at = calls.singleOrNull() ?: hdDefaultChanged("expected one store of the composer's HD answer, found ${calls.size}")
+    val arguments = code[at].hdArguments()
+    if (arguments.size != 2) hdDefaultChanged("the composer's HD answer store changed")
+    val answer = arguments[1]
+    if (answer >= firstParameter) hdDefaultChanged("the composer's HD answer is a parameter now")
+    val literal = (0 until at).lastOrNull { code[it].opcode.setsRegister() && code[it].hdRegister() == answer }
+    if (literal == null || code[literal].opcode != Opcode.CONST_4 ||
+        (code[literal] as? NarrowLiteralInstruction)?.narrowLiteral != 0) {
+        hdDefaultChanged("the composer's HD answer no longer starts false")
+    }
+    if (code.getOrNull(at + 1)?.opcode != Opcode.RETURN) hdDefaultChanged("the composer's HD answer isn't stored last")
+    val temp = (0 until firstParameter).firstOrNull { it != answer && it !in arguments }
+        ?: hdDefaultChanged("the attachment preview's handler has no free register")
+    val addresses = code.runningFold(0) { address, instruction -> address + instruction.codeUnits }
+    if (implementation!!.tryBlocks.any { addresses[at] - it.startCodeAddress in 0 until it.codeUnitCount }) {
+        hdDefaultChanged("the composer's HD answer store sits in a try block")
+    }
+    return HdDefaultInsert(at, answer, temp)
+}
+
+/** When the switch is on, a picked photo with no stored answer counts as HD here too, so the composer's send agrees. */
+internal fun MutableMethod.injectHdDefaultInsert(site: HdDefaultInsert, read: Method) {
+    addInstructionsWithLabels(site.at, """
+        if-eqz v${site.answer}, :store
+        const-string v${site.temp}, "$HD_DEFAULT"
+        invoke-static {v${site.temp}}, $SETTINGS->enabled(Ljava/lang/String;)Z
+        move-result v${site.temp}
+        if-eqz v${site.temp}, :store
+        invoke-static {}, ${read.definingClass}->${read.name}()Z
+        move-result v${site.answer}
+    """.trimIndent(), ExternalLabel("store", getInstruction(site.at)))
+}
+
 /** Both methods, each found exactly once, or a PatchException saying which one isn't. */
 internal fun findHdDefault(classes: Iterable<ClassDef>): HdDefaultSites {
     val gates = hdDefaultFlagReaders.methods(classes)
@@ -176,7 +240,10 @@ internal fun findHdDefault(classes: Iterable<ClassDef>): HdDefaultSites {
         field in keys || (field.substringBefore("->") == cls.type && hdCopiesKey(cls, field, keys))
     }.map { it.second }
     val read = reads.singleOrNull() ?: hdDefaultChanged("expected one read of the $HD_TOGGLE_KEY preference, found ${reads.size}")
-    return HdDefaultSites(gate, read)
+    val inserts = hdDefaultInserts.methods(classes)
+    val insert = inserts.singleOrNull() ?: hdDefaultChanged("expected one handler for media inserted into the composer, found ${inserts.size}")
+    insert.hdDefaultInsert()
+    return HdDefaultSites(gate, read, insert)
 }
 
 /** While the switch is on, the gate answers yes before it asks the server. */

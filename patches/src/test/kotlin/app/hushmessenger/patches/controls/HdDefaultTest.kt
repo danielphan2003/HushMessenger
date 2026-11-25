@@ -25,6 +25,11 @@ private const val HOLDER = "LX/Af9;"
 private const val HD_READ = "$HOLDER->A01()Z"
 private const val PREFERENCES = "Lcom/facebook/prefs/shared/FbSharedPreferences;"
 private const val CONFIG = "Lcom/facebook/mobileconfig/factory/MobileConfigUnsafeContext;"
+private const val INSERT_CLASS = "LX/6Iy;"
+private const val INSERT_EVENT = "Lcom/facebook/xapp/messaging/composer/attachmentpreview/events/InsertAttachmentPreviewEvent;"
+private const val HD_BOX = "LX/5K7;"
+private const val INSERT = "$INSERT_CLASS->A0B($INSERT_EVENT$HD_BOX" + "Ljava/util/List;Z)V"
+private const val HD_SET = "$HD_BOX->A01($HD_BOX" + "Z)V"
 private val STATIC = AccessFlags.PUBLIC.value or AccessFlags.STATIC.value
 private val CLASS_INIT = AccessFlags.STATIC.value or AccessFlags.CONSTRUCTOR.value
 
@@ -78,10 +83,38 @@ private val HOLDER_INIT = """
     return-void
 """.trimIndent()
 
+/** The insert handler as 587 writes it: the items, the default false, and the box stored from whether any is HD. */
+private fun insertBody(answer: String = "v3") = """
+    instance-of v0, p0, Ljava/util/Collection;
+    const/4 v3, 0x0
+    if-eqz v0, :cond_1d
+    invoke-interface {p0}, Ljava/util/Collection;->isEmpty()Z
+    move-result v0
+    if-eqz v0, :cond_1d
+    :goto_19
+    invoke-static {p1, $answer}, $HD_SET
+    return-void
+    :cond_1d
+    invoke-interface {p0}, Ljava/util/List;->iterator()Ljava/util/Iterator;
+    move-result-object v2
+    :cond_21
+    invoke-interface {v2}, Ljava/util/Iterator;->hasNext()Z
+    move-result v0
+    if-eqz v0, :cond_19
+    invoke-static {v2}, LX/4DG;->A0X(Ljava/util/Iterator;)Lcom/facebook/ui/media/attachments/model/MediaResource;
+    move-result-object v0
+    iget-object v1, v0, Lcom/facebook/ui/media/attachments/model/MediaResource;->A0Q:LX/A0i;
+    sget-object v0, LX/A0i;->A04:LX/A0i;
+    if-ne v1, v0, :cond_21
+    const/4 v3, 0x1
+    goto :goto_19
+""".trimIndent()
+
 private fun hdFixture(
     gate: String = gateBody(),
     read: String = readBody(),
     keys: String = KEYS_INIT,
+    insert: String = insertBody(),
     extra: List<MutableClass> = emptyList(),
 ): List<MutableClass> = listOf(
     fixtureClass(GATE_CLASS, listOf(fixtureMethod(HD_GATE, gate, registers = 5))),
@@ -92,6 +125,7 @@ private fun hdFixture(
         // The clicked key is read the same way, and must not be taken for the remembered answer.
         fixtureMethod("$HOLDER->A02()Z", readBody(field = "$HOLDER->A02:LX/1BK;"), registers = 3, flags = STATIC),
     )),
+    fixtureClass(INSERT_CLASS, listOf(fixtureMethod(INSERT, insert, registers = 10, flags = STATIC))),
 ) + extra
 
 private fun List<MutableClass>.method(id: String): MutableMethod =
@@ -106,16 +140,39 @@ class HdDefaultTest {
         hdDefaultSearch = null
     }
 
-    @Test fun findsTheGateAndTheReadOfTheRememberedAnswer() {
+    @Test fun findsTheGateTheReadAndTheInsertOfTheRememberedAnswer() {
         val classes = hdFixture()
         val sites = findHdDefault(classes)
         assertEquals(HD_GATE, sites.gate.hookId())
         assertEquals(HD_READ, sites.read.hookId())
-        // findControls finds the same pair from its shared walk, and CompatReport agrees.
+        assertEquals(INSERT, sites.insert.hookId())
+        // findControls finds the same three from its shared walk, and CompatReport agrees.
         findControls(classes)
         val found = hdDefaultSearch!!.getOrThrow()
-        assertEquals(HD_GATE to HD_READ, found.gate.hookId() to found.read.hookId())
-        assertEquals(emptyList<String>() to listOf("gate $HD_GATE", "read $HD_READ"), CompatMirror.hdDefault(classes))
+        assertEquals(listOf(HD_GATE, HD_READ, INSERT), listOf(found.gate.hookId(), found.read.hookId(), found.insert.hookId()))
+        assertEquals(emptyList<String>() to listOf("gate $HD_GATE", "read $HD_READ", "insert $INSERT"), CompatMirror.hdDefault(classes))
+    }
+
+    @Test fun theComposerStartsFromTheRememberedAnswerToo() {
+        val classes = hdFixture()
+        val insert = classes.method(INSERT)
+        insert.injectHdDefaultInsert(insert.hdDefaultInsert(), classes.method(HD_READ))
+        val code = insert.code()
+        val store = code.indexOfFirst { it.reference() == HD_SET }
+        assertTrue(store > 7)
+        // The switch is read first, so a stored answer still wins; then the remembered answer lands in the box's answer.
+        assertEquals("$HOLDER->A01()Z", code[store - 2].reference())
+        assertEquals("$SETTINGS->enabled(Ljava/lang/String;)Z", code[store - 5].reference())
+        assertEquals(HD_DEFAULT, ((code[store - 6] as ReferenceInstruction).reference as StringReference).string)
+        assertEquals(listOf(Opcode.IF_EQZ, Opcode.CONST_STRING, Opcode.INVOKE_STATIC, Opcode.MOVE_RESULT,
+            Opcode.IF_EQZ, Opcode.INVOKE_STATIC, Opcode.MOVE_RESULT), code.subList(store - 7, store).map { it.opcode })
+        // The stock branch is untouched after the store.
+        assertEquals(Opcode.RETURN, code[store + 1].opcode)
+    }
+
+    @Test fun anInsertHandlerThatTakesItsAnswerAsAParameterIsRefused() {
+        val classes = hdFixture(insert = insertBody(answer = "p3"))
+        assertContains(assertFailsWith<PatchException> { findHdDefault(classes) }.message!!, "is a parameter now")
     }
 
     @Test fun aKeyReadStraightFromTheKeyTableCountsToo() {
