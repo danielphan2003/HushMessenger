@@ -1597,11 +1597,11 @@ final class Media {
     }
 
     /** HdDefault.kt's store: the static (Z)V method in the read's class that names the remembered key. */
-    static boolean hdDefaultWrite(Method m, String readClass, String key) {
+    static boolean hdDefaultWrite(Method m, String readClass, Set<String> accepted) {
         if (!m.getDefiningClass().equals(readClass) || !m.getReturnType().equals("V") ||
             !AccessFlags.STATIC.isSet(m.getAccessFlags()) || m.getParameterTypes().size() != 1 ||
             !m.getParameterTypes().get(0).toString().equals("Z")) return false;
-        return instructions(m).stream().anyMatch(i -> key.equals(ref(i)));
+        return instructions(m).stream().anyMatch(i -> accepted.contains(ref(i)));
     }
 
     /** HdDefault.kt's send: static void with one parameter, the send log line and one read of the composer's HD flag. */
@@ -1697,10 +1697,17 @@ final class Media {
         var writes = new ArrayList<String>();
         if (reads.size() == 1) {
             var read = reads.get(0);
-            String key = readKeys.get(hookId(read));
+            var accepted = new HashSet<String>(keys);
+            accepted.add(readKeys.get(hookId(read)));
+            var holderInit = initializers.getOrDefault(read.getDefiningClass(), List.of());
+            for (int i = 0; i + 1 < holderInit.size(); i++) {
+                if (holderInit.get(i).getOpcode() == Opcode.SGET_OBJECT && keys.contains(ref(holderInit.get(i))) &&
+                    holderInit.get(i + 1).getOpcode() == Opcode.SPUT_OBJECT &&
+                    register(holderInit.get(i)) == register(holderInit.get(i + 1))) accepted.add(ref(holderInit.get(i + 1)));
+            }
             for (ClassDef cls : classes) {
                 if (!cls.getType().equals(read.getDefiningClass())) continue;
-                for (Method m : cls.getMethods()) if (hdDefaultWrite(m, read.getDefiningClass(), key)) writes.add(hookId(m));
+                for (Method m : cls.getMethods()) if (hdDefaultWrite(m, read.getDefiningClass(), accepted)) writes.add(hookId(m));
             }
         }
         if (gates.size() == 1) targets.add("gate " + gates.get(0));
