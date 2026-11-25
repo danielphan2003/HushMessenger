@@ -40,7 +40,7 @@ internal const val HD_DEFAULT_FLAG = 0x10100bd00001191L
 internal const val HD_TOGGLE_KEY = "hd_button_toggle_state"
 
 /** The attachment preview's insert event, the one method that takes it first. */
-internal const val INSERT_PREVIEW = "Lcom/facebook/xapp/messaging/composer/attachmentpreview/events/InsertAttachmentPreviewEvent;"
+internal const val HD_INSERT_PREVIEW = "Lcom/facebook/xapp/messaging/composer/attachmentpreview/events/InsertAttachmentPreviewEvent;"
 
 /**
  * The methods the switch changes: the server gate, the static read of the remembered answer, and the handler that files
@@ -176,7 +176,7 @@ private fun hdCopiesKey(cls: ClassDef, field: String, keys: Set<String>): Boolea
 /** Every static void method whose first parameter is the attachment preview's insert event. */
 internal val hdDefaultInserts = methodCheck { _, method ->
     method.returnType == "V" && AccessFlags.STATIC.isSet(method.accessFlags) &&
-        method.parameterTypes.firstOrNull()?.toString() == INSERT_PREVIEW
+        method.parameterTypes.firstOrNull()?.toString() == HD_INSERT_PREVIEW
 }
 
 /**
