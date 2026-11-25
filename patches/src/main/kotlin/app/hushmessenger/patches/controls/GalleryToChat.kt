@@ -3,7 +3,7 @@ package app.hushmessenger.patches.controls
 import app.morphe.patcher.extensions.InstructionExtensions.addInstructions
 import app.morphe.patcher.extensions.InstructionExtensions.addInstructionsWithLabels
 import app.morphe.patcher.extensions.InstructionExtensions.getInstruction
-import app.morphe.patcher.extensions.InstructionExtensions.replaceInstructions
+import app.morphe.patcher.extensions.InstructionExtensions.replaceInstruction
 import app.morphe.patcher.patch.PatchException
 import app.morphe.patcher.util.proxy.mutableTypes.MutableMethod
 import app.morphe.patcher.util.smali.ExternalLabel
@@ -480,10 +480,10 @@ internal fun MutableMethod.injectGalleryTrayText(site: GalleryTrayTextSite) {
             else -> throw PatchException("Messenger controls: unexpected tray caption call shape")
         }
         val restore = if (textReg <= 15) "const/4 v$textReg, 0x0" else "const/16 v$textReg, 0x0"
-        replaceInstructions(
-            idx,
+        replaceInstruction(idx, "const-class v$textReg, $owner")
+        addInstructions(
+            idx + 1,
             """
-                const-class v$textReg, $owner
                 $invokeLine
                 $restore
             """.trimIndent(),
