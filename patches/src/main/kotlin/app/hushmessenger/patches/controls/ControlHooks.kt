@@ -283,6 +283,7 @@ private fun findControlsIn(classes: Iterable<ClassDef>, community: CommunityInbo
     found.getValue(MENU_BLUR).addAll(findMenuBlur(classes))
     found.getValue(GALLERY_TEMP_FILE).addAll(findGalleryTempFile(classes))
     found.getValue(GALLERY_TO_CHAT).addAll(findGalleryToChat(classes))
+    galleryTrayTextSearch = runCatching { findGalleryTrayText(classes) }
     for ((hook, methods) in findCustomFont(classes)) found.getValue(hook).addAll(methods)
     // No profile records HD photos by default, so a miss here only stops that patch, which reports why.
     hdDefaultSearch = runCatching { findHdDefault(classes) }
