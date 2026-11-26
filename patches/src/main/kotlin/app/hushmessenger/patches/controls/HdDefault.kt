@@ -30,7 +30,7 @@ import com.android.tools.smali.dexlib2.iface.reference.StringReference
  * on, and a photo you send with HD off stores false, which then holds until you turn HD on again.
  *
  * It finds each method by what it does instead of by name, so no profile records them, the way the Material You theme
- * finds its targets. scripts/compat/Media.java's hdDefaultProblems looks for the same three methods.
+ * finds its targets. scripts/compat/Media.java's hdDefaultProblems looks for the same methods.
  */
 internal const val HD_DEFAULT = "hd_default"
 
@@ -54,16 +54,20 @@ internal const val HD_REACTIVE_PROPS = "LX/4wl;"
 
 /**
  * The methods the switch changes: the server gate, the static read of the remembered answer, the handler that files a
- * picked photo in the composer's attachment preview, the composer's send click and the preview's HD toggle.
+ * picked photo in the composer's attachment preview, the composer's send click, the preview's HD toggle and the tray's
+ * send.
  */
 internal class HdDefaultSites(val gate: Method, val read: Method, val write: Method, val insert: Method,
-    val send: Method, val toggle: Method)
+    val send: Method, val toggle: Method, val tray: Method)
 
 /**
  * The insert handler's store of the tray's HD answer: the setter call's index, the setter, the box and answer registers,
  * and a spare local.
  */
 internal class HdDefaultInsert(val at: Int, val setter: MethodReference, val box: Int, val answer: Int, val temp: Int)
+
+/** The tray send's read of the tray's HD answer: the call's index and the register its answer lands in. */
+internal class HdDefaultTray(val at: Int, val answer: Int)
 
 /** The send click's view field, the view it casts to, and the HD flag it reads. */
 internal class HdDefaultSend(val viewField: FieldReference, val hd: FieldReference)
@@ -266,6 +270,59 @@ internal fun MutableMethod.injectHdDefaultInsert(site: HdDefaultInsert, read: Me
     """.trimIndent(), ExternalLabel("done", getInstruction(done)))
 }
 
+/**
+ * The tray's send: a static method beside the insert handler that takes the tray's HD box and reads it with a static
+ * `(box)Z` call whose answer picks between two of the quality enum's constants for each photo:
+ *
+ *     invoke-static {box}, <box>->?(<box>)Z
+ *     move-result vA
+ *     if-eqz vA, :normal
+ *     sget-object vX, <quality>->HD:<quality>
+ *
+ * Other reads of the box, such as the send's logging, don't pick a quality and don't count. The hook goes in front of
+ * the read, where vA is free because the read writes it, so this refuses a read that something jumps to, one inside a
+ * try block, and an answer register a plain call can't reach. Null when [this] isn't the tray's send.
+ */
+internal fun Method.hdDefaultTray(box: String): HdDefaultTray? {
+    if (!AccessFlags.STATIC.isSet(accessFlags) || parameterTypes.none { it.toString() == box }) return null
+    val code = hdCode()
+    val reads = code.indices.filter { i ->
+        val call = code[i].hdRef() as? MethodReference ?: return@filter false
+        val result = code.getOrNull(i + 1)
+        val branch = code.getOrNull(i + 2)
+        val quality = code.getOrNull(i + 3)?.takeIf { it.opcode == Opcode.SGET_OBJECT }?.hdRef() as? FieldReference
+        (code[i].opcode == Opcode.INVOKE_STATIC || code[i].opcode == Opcode.INVOKE_STATIC_RANGE) &&
+            call.definingClass == box && call.returnType == "Z" && call.parameterTypes.map(CharSequence::toString) == listOf(box) &&
+            result?.opcode == Opcode.MOVE_RESULT && branch?.opcode == Opcode.IF_EQZ && branch.hdRegister() == result.hdRegister() &&
+            quality != null && quality.type == quality.definingClass
+    }
+    val at = reads.singleOrNull() ?: return null
+    val answer = code[at + 1].hdRegister()!!
+    if (answer >= 16 || answer >= parameterRegister(0) || answer in code[at].hdArguments() || at in jumpTargets()) return null
+    val addresses = code.runningFold(0) { address, instruction -> address + instruction.codeUnits }
+    if (implementation!!.tryBlocks.any { addresses[at] - it.startCodeAddress in 0 until it.codeUnitCount }) return null
+    return HdDefaultTray(at, answer)
+}
+
+/**
+ * While the switch is on, the tray's send takes the remembered answer instead of the tray's box. The box is filled once,
+ * when a photo is picked, and the full preview's HD toggle never reaches it; the toggle does store the remembered answer
+ * at once, so this way a toggle in the preview and a send from the chat agree. With the switch off the box answers, as
+ * stock.
+ */
+internal fun MutableMethod.injectHdDefaultTray(site: HdDefaultTray, read: Method) {
+    val answer = "v${site.answer}"
+    addInstructionsWithLabels(site.at, """
+        const-string $answer, "$HD_DEFAULT"
+        invoke-static {$answer}, $SETTINGS->enabled(Ljava/lang/String;)Z
+        move-result $answer
+        if-eqz $answer, :stock
+        invoke-static {}, ${read.definingClass}->${read.name}()Z
+        move-result $answer
+        goto :chosen
+    """.trimIndent(), ExternalLabel("stock", getInstruction(site.at)), ExternalLabel("chosen", getInstruction(site.at + 2)))
+}
+
 /** Every method that logs the composer's send click. findControls answers it from its shared walk. */
 internal val hdDefaultComposerSends = MethodCheck { loadsString(HD_COMPOSER_SEND)() }
 
@@ -389,14 +446,16 @@ internal fun findHdDefault(classes: Iterable<ClassDef>): HdDefaultSites {
     val write = writes.singleOrNull() ?: hdDefaultChanged("expected one store of the $HD_TOGGLE_KEY preference, found ${writes.size}")
     val inserts = hdDefaultInserts.methods(classes)
     val insert = inserts.singleOrNull() ?: hdDefaultChanged("expected one handler for media inserted into the composer, found ${inserts.size}")
-    insert.hdDefaultInsert()
+    val box = insert.hdDefaultInsert().setter.parameterTypes[0].toString()
+    val trays = classes.firstOrNull { it.type == insert.definingClass }?.methods?.filter { it.hdDefaultTray(box) != null }.orEmpty()
+    val tray = trays.singleOrNull() ?: hdDefaultChanged("expected one tray send reading the tray's HD answer, found ${trays.size}")
     val sends = hdDefaultComposerSends.methods(classes)
     val send = sends.singleOrNull() ?: hdDefaultChanged("expected one composer send, found ${sends.size}")
     send.hdDefaultSend()
     val toggles = hdDefaultToggles.methods(classes)
     val toggle = toggles.singleOrNull() ?: hdDefaultChanged("expected one preview HD toggle, found ${toggles.size}")
     toggle.hdDefaultToggle()
-    return HdDefaultSites(gate, read, write, insert, send, toggle)
+    return HdDefaultSites(gate, read, write, insert, send, toggle, tray)
 }
 
 /** While the switch is on, the gate answers yes before it asks the server. */

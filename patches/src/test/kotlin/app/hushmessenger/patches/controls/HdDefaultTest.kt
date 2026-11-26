@@ -33,6 +33,9 @@ private const val INSERT_EVENT = "Lcom/facebook/xapp/messaging/composer/attachme
 private const val HD_BOX = "LX/5K7;"
 private const val INSERT = "$INSERT_CLASS->A0B($INSERT_EVENT$HD_BOX" + "Ljava/util/List;Z)V"
 private const val HD_SET = "$HD_BOX->A01($HD_BOX" + "Z)V"
+private const val HD_GET = "$HD_BOX->A02($HD_BOX)Z"
+private const val QUALITY = "LX/A0i;"
+private const val TRAY = "$INSERT_CLASS->A05($HD_BOX" + "Ljava/util/List;IZZZZ)V"
 private const val HD_WRITE = "$HOLDER->A00(Z)V"
 private const val HD_SEND = "ComposeFragment.onSendClicked"
 private const val COMPOSER = "Lcom/facebook/messaging/composer/OneLineComposerView;"
@@ -124,6 +127,24 @@ private fun insertBody(answer: String = "v3") = """
     goto :goto_19
 """.trimIndent()
 
+/**
+ * The tray's send as 587 writes it, cut down: each photo's quality from the box, then a second read of the box for the
+ * send's logging, which doesn't pick a quality.
+ */
+private fun trayBody(logged: String = "v1") = """
+    invoke-static/range {p0 .. p0}, $HD_GET
+    move-result v0
+    if-eqz v0, :cond_a
+    sget-object v0, $QUALITY->A04:$QUALITY
+    :goto_7
+    invoke-static {p0}, $HD_GET
+    move-result $logged
+    return-void
+    :cond_a
+    sget-object v0, $QUALITY->A03:$QUALITY
+    goto :goto_7
+""".trimIndent()
+
 /** The writer as 587 stores it: the preferences editor takes the remembered key and the answer. */
 private val WRITE_BODY = """
     sget-object v0, $HOLDER->A00:LX/2zo;
@@ -170,6 +191,7 @@ private fun hdFixture(
     read: String = readBody(),
     keys: String = KEYS_INIT,
     insert: String = insertBody(),
+    tray: String = trayBody(),
     extra: List<MutableClass> = emptyList(),
 ): List<MutableClass> = listOf(
     fixtureClass(GATE_CLASS, listOf(fixtureMethod(HD_GATE, gate, registers = 5))),
@@ -181,7 +203,10 @@ private fun hdFixture(
         // The clicked key is read the same way, and must not be taken for the remembered answer.
         fixtureMethod("$HOLDER->A02()Z", readBody(field = "$HOLDER->A02:LX/1BK;"), registers = 3, flags = STATIC),
     )),
-    fixtureClass(INSERT_CLASS, listOf(fixtureMethod(INSERT, insert, registers = 10, flags = STATIC))),
+    fixtureClass(INSERT_CLASS, listOf(
+        fixtureMethod(INSERT, insert, registers = 10, flags = STATIC),
+        fixtureMethod(TRAY, tray, registers = 9, flags = STATIC),
+    )),
     fixtureClass(SEND_CLASS, listOf(fixtureMethod(SEND, sendBody(), registers = 15, flags = STATIC)),
         extraFields = listOf(field(SEND_CLASS, "A06", "LX/6f3;"))),
     fixtureClass(COMPOSER, extraFields = listOf(field(COMPOSER, "A18", "Z"))),
@@ -210,12 +235,15 @@ class HdDefaultTest {
         assertEquals(INSERT, sites.insert.hookId())
         assertEquals(SEND, sites.send.hookId())
         assertEquals(TOGGLE, sites.toggle.hookId())
-        // findControls finds the same six from its shared walk, and CompatReport agrees.
+        assertEquals(TRAY, sites.tray.hookId())
+        // findControls finds the same seven from its shared walk, and CompatReport agrees.
         findControls(classes)
         val found = hdDefaultSearch!!.getOrThrow()
-        assertEquals(listOf(HD_GATE, HD_READ, HD_WRITE, INSERT, SEND, TOGGLE),
-            listOf(found.gate.hookId(), found.read.hookId(), found.write.hookId(), found.insert.hookId(), found.send.hookId(), found.toggle.hookId()))
-        assertEquals(emptyList<String>() to listOf("gate $HD_GATE", "read $HD_READ", "write $HD_WRITE", "insert $INSERT", "send $SEND", "toggle $TOGGLE"),
+        assertEquals(listOf(HD_GATE, HD_READ, HD_WRITE, INSERT, SEND, TOGGLE, TRAY),
+            listOf(found.gate.hookId(), found.read.hookId(), found.write.hookId(), found.insert.hookId(), found.send.hookId(),
+                found.toggle.hookId(), found.tray.hookId()))
+        assertEquals(emptyList<String>() to listOf("gate $HD_GATE", "read $HD_READ", "write $HD_WRITE", "insert $INSERT", "send $SEND",
+            "toggle $TOGGLE", "tray $TRAY"),
             CompatMirror.hdDefault(classes))
     }
 
@@ -279,6 +307,36 @@ class HdDefaultTest {
             val target = addresses[skip] + (code[skip] as OffsetInstruction).codeOffset
             assertEquals(addresses[again + 1], target)
         }
+    }
+
+    @Test fun theTraySendReadsTheRememberedAnswer() {
+        val classes = hdFixture()
+        val tray = classes.method(TRAY)
+        val site = tray.hdDefaultTray(HD_BOX)!!
+        assertEquals(0, site.at)
+        tray.injectHdDefaultTray(site, classes.method(HD_READ))
+        val code = tray.code()
+        assertEquals(listOf(Opcode.CONST_STRING, Opcode.INVOKE_STATIC, Opcode.MOVE_RESULT, Opcode.IF_EQZ, Opcode.INVOKE_STATIC,
+            Opcode.MOVE_RESULT, Opcode.GOTO), code.take(7).map { it.opcode })
+        assertEquals(HD_DEFAULT, ((code[0] as ReferenceInstruction).reference as StringReference).string)
+        assertEquals("$SETTINGS->enabled(Ljava/lang/String;)Z", code[1].reference())
+        assertEquals("$HOLDER->A01()Z", code[4].reference())
+        assertEquals(0, (code[5] as OneRegisterInstruction).registerA)
+        // Off, the stock read of the box answers; on, the remembered answer goes straight to the quality branch.
+        val addresses = code.runningFold(0) { address, instruction -> address + instruction.codeUnits }
+        fun target(i: Int) = addresses[i] + (code[i] as OffsetInstruction).codeOffset
+        assertEquals(HD_GET, code[7].reference())
+        assertEquals(addresses[7], target(3))
+        assertEquals(Opcode.IF_EQZ, code[9].opcode)
+        assertEquals(addresses[9], target(6))
+        // The logging read is left alone.
+        assertEquals(2, code.count { it.reference() == HD_GET })
+    }
+
+    @Test fun aTraySendWithoutItsQualityReadIsRefused() {
+        val classes = hdFixture(tray = trayBody().replace("sget-object v0, $QUALITY->A04:$QUALITY", "const/4 v0, 0x1"))
+        assertContains(assertFailsWith<PatchException> { findHdDefault(classes) }.message!!, "tray send")
+        assertContains(CompatMirror.hdDefault(classes).first.single(), "tray send")
     }
 
     @Test fun anInsertHandlerThatTakesItsAnswerAsAParameterIsRefused() {

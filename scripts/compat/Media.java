@@ -1596,6 +1596,43 @@ final class Media {
         return calls == 1;
     }
 
+    /** The box type an insert handler stores its HD answer into: the first parameter of its static (box, Z)V setter. */
+    static String hdDefaultInsertBox(Method m) {
+        var params = new ArrayList<String>();
+        for (var p : m.getParameterTypes()) params.add(p.toString());
+        for (var i : instructions(m)) {
+            if (i.getOpcode() != Opcode.INVOKE_STATIC || !(i instanceof ReferenceInstruction r) || !(r.getReference() instanceof MethodReference call)) continue;
+            if (call.getReturnType().equals("V") && call.getParameterTypes().size() == 2 && call.getParameterTypes().get(1).toString().equals("Z") &&
+                params.contains(call.getParameterTypes().get(0).toString())) return call.getParameterTypes().get(0).toString();
+        }
+        return null;
+    }
+
+    /** HdDefault.kt's tray send: static, takes the box, and reads it once with a (box)Z call whose answer picks a quality constant. */
+    static boolean hdDefaultTray(Method m, String box) {
+        if (!AccessFlags.STATIC.isSet(m.getAccessFlags())) return false;
+        boolean takesBox = false;
+        for (var p : m.getParameterTypes()) if (p.toString().equals(box)) takesBox = true;
+        if (!takesBox) return false;
+        var code = instructions(m);
+        int reads = 0;
+        for (int i = 0; i + 3 < code.size(); i++) {
+            var op = code.get(i).getOpcode();
+            if ((op != Opcode.INVOKE_STATIC && op != Opcode.INVOKE_STATIC_RANGE) || !(code.get(i) instanceof ReferenceInstruction r) ||
+                !(r.getReference() instanceof MethodReference call)) continue;
+            if (!call.getDefiningClass().equals(box) || !call.getReturnType().equals("Z") || call.getParameterTypes().size() != 1 ||
+                !call.getParameterTypes().get(0).toString().equals(box)) continue;
+            if (code.get(i + 1).getOpcode() != Opcode.MOVE_RESULT || code.get(i + 2).getOpcode() != Opcode.IF_EQZ ||
+                register(code.get(i + 2)) != register(code.get(i + 1)) || code.get(i + 3).getOpcode() != Opcode.SGET_OBJECT) continue;
+            if (!(code.get(i + 3) instanceof ReferenceInstruction q) || !(q.getReference() instanceof FieldReference f) ||
+                !f.getType().equals(f.getDefiningClass())) continue;
+            int answer = register(code.get(i + 1));
+            if (answer >= 16 || answer >= parameterRegister(m, 0) || hdArguments(code.get(i)).contains(answer)) return false;
+            reads++;
+        }
+        return reads == 1;
+    }
+
     /** HdDefault.kt's store: the static (Z)V method in the read's class that names the remembered key. */
     static boolean hdDefaultWrite(Method m, String readClass, Set<String> accepted) {
         if (!m.getDefiningClass().equals(readClass) || !m.getReturnType().equals("V") ||
@@ -1642,11 +1679,12 @@ final class Media {
         return false;
     }
 
-    /** What HD photos by default finds when it patches: one gate, read, store, insert handler, send click and toggle. */
+    /** What HD photos by default finds when it patches: one gate, read, store, insert handler, send click, toggle and tray send. */
     static List<String> hdDefaultProblems(List<ClassDef> classes, List<String> targets) {
         var problems = new ArrayList<String>();
         var gates = new ArrayList<String>();
         var inserts = new ArrayList<String>();
+        var insertMethods = new ArrayList<Method>();
         var sends = new ArrayList<String>();
         var toggles = new ArrayList<String>();
         var keys = new HashSet<String>();
@@ -1654,7 +1692,10 @@ final class Media {
         for (ClassDef cls : classes) {
             for (Method m : cls.getMethods()) {
                 if (hdDefaultGate(m)) gates.add(hookId(m));
-                if (hdDefaultInsert(m)) inserts.add(hookId(m));
+                if (hdDefaultInsert(m)) {
+                    inserts.add(hookId(m));
+                    insertMethods.add(m);
+                }
                 if (hdDefaultSend(m)) sends.add(hookId(m));
                 if (hdDefaultToggle(m)) toggles.add(hookId(m));
                 if (!m.getName().equals("<clinit>")) continue;
@@ -1725,6 +1766,17 @@ final class Media {
         else problems.add("expected one composer send, found " + sends.size());
         if (toggles.size() == 1) targets.add("toggle " + toggles.get(0));
         else problems.add("expected one preview HD toggle, found " + toggles.size());
+        if (insertMethods.size() == 1) {
+            var insert = insertMethods.get(0);
+            String box = hdDefaultInsertBox(insert);
+            var trays = new ArrayList<String>();
+            for (ClassDef cls : classes) {
+                if (!cls.getType().equals(insert.getDefiningClass())) continue;
+                for (Method m : cls.getMethods()) if (box != null && hdDefaultTray(m, box)) trays.add(hookId(m));
+            }
+            if (trays.size() == 1) targets.add("tray " + trays.get(0));
+            else problems.add("expected one tray send reading the tray's HD answer, found " + trays.size());
+        }
         return problems;
     }
 }

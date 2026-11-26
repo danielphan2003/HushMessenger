@@ -989,17 +989,21 @@ val hdDefaultPatch = bytecodePatch(
         val insert = mutable(sites.insert)
         val send = mutable(sites.send)
         val toggle = mutable(sites.toggle)
+        val tray = mutable(sites.tray)
         // All are checked before the first edit, so a changed build fails with the APK untouched.
         gate.validateHdDefaultGate()
         read.hdDefaultRead()
         val insertSite = insert.hdDefaultInsert()
         val sendSite = send.hdDefaultSend()
         val toggleSite = toggle.hdDefaultToggle()
+        val box = insertSite.setter.parameterTypes[0].toString()
+        val traySite = tray.hdDefaultTray(box) ?: throw PatchException("HD photos by default: the tray's send changed. Use an unmodified supported Messenger APK.")
         gate.injectHdDefaultGate()
         read.injectHdDefaultRead()
         insert.injectHdDefaultInsert(insertSite, sites.read)
         send.injectHdDefaultSend(sendSite, sites.read)
         toggle.injectHdDefaultToggle(toggleSite, sites.write)
+        tray.injectHdDefaultTray(traySite, sites.read)
         recordControl(HD_DEFAULT)
         hdDefaultApplied = true
     }
