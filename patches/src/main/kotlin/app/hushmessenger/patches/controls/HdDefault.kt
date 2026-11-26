@@ -59,8 +59,11 @@ internal const val HD_REACTIVE_PROPS = "LX/4wl;"
 internal class HdDefaultSites(val gate: Method, val read: Method, val write: Method, val insert: Method,
     val send: Method, val toggle: Method)
 
-/** The insert handler's store of the composer's HD answer: the setter call's index, its answer register, a spare local. */
-internal class HdDefaultInsert(val at: Int, val answer: Int, val temp: Int)
+/**
+ * The insert handler's store of the tray's HD answer: the setter call's index, the setter, the box and answer registers,
+ * and a spare local.
+ */
+internal class HdDefaultInsert(val at: Int, val setter: MethodReference, val box: Int, val answer: Int, val temp: Int)
 
 /** The send click's view field, the view it casts to, and the HD flag it reads. */
 internal class HdDefaultSend(val viewField: FieldReference, val hd: FieldReference)
@@ -207,9 +210,11 @@ internal val hdDefaultInserts = methodCheck { _, method ->
 }
 
 /**
- * The insert handler's store of the composer's HD answer: one call to a static `(box, Z)V` setter, the box among the
- * handler's parameters and a local register as the answer, which starts false and is set true on the HD branch. The
- * hook needs one more local it may clobber, so this refuses a handler that has none.
+ * The insert handler's store of the tray's HD answer: one call to a static `(box, Z)V` setter, the box among the
+ * handler's parameters and a local register as the answer, which starts false and is set true when an item is HD. The
+ * tray's send reads that box, so it is the quality every photo in the tray goes out at. The hook calls the setter again
+ * with the same registers and needs one more local it may clobber, so this refuses a handler where any of them doesn't
+ * fit a plain invoke.
  */
 internal fun Method.hdDefaultInsert(): HdDefaultInsert {
     val code = hdCode()
@@ -230,26 +235,35 @@ internal fun Method.hdDefaultInsert(): HdDefaultInsert {
         (code[it] as? NarrowLiteralInstruction)?.narrowLiteral == 0 }
     if (!literal) hdDefaultChanged("the composer's HD answer no longer starts false")
     if (code.getOrNull(at + 1)?.opcode != Opcode.RETURN_VOID) hdDefaultChanged("the composer's HD answer isn't stored last")
-    val temp = (0 until firstParameter).firstOrNull { it != answer && it !in arguments }
+    val box = arguments[0]
+    if (box >= 16 || answer >= 16) hdDefaultChanged("the composer's HD answer store uses registers a plain call can't reach")
+    val temp = (0 until minOf(firstParameter, 16)).firstOrNull { it != answer && it !in arguments }
         ?: hdDefaultChanged("the attachment preview's handler has no free register")
     val addresses = code.runningFold(0) { address, instruction -> address + instruction.codeUnits }
     if (implementation!!.tryBlocks.any { addresses[at] - it.startCodeAddress in 0 until it.codeUnitCount }) {
         hdDefaultChanged("the composer's HD answer store sits in a try block")
     }
-    return HdDefaultInsert(at, answer, temp)
+    return HdDefaultInsert(at, code[at].hdRef() as MethodReference, box, answer, temp)
 }
 
-/** When the switch is on, a picked photo with no stored answer counts as HD here too, so the composer's send agrees. */
+/**
+ * When the switch is on and no picked item is HD, the tray's box takes the remembered answer, so the tray's send goes
+ * out in HD like the preview shows. The hook runs after the stock store, before the return: every path into the store
+ * falls through to it, which a hook placed before the store can't promise, because the handler's branches land on the
+ * store itself. A stored "off" still wins, and an item already marked HD keeps the box on.
+ */
 internal fun MutableMethod.injectHdDefaultInsert(site: HdDefaultInsert, read: Method) {
-    addInstructionsWithLabels(site.at, """
-        if-eqz v${site.answer}, :store
+    val done = site.at + 1
+    addInstructionsWithLabels(done, """
+        if-nez v${site.answer}, :done
         const-string v${site.temp}, "$HD_DEFAULT"
         invoke-static {v${site.temp}}, $SETTINGS->enabled(Ljava/lang/String;)Z
         move-result v${site.temp}
-        if-eqz v${site.temp}, :store
+        if-eqz v${site.temp}, :done
         invoke-static {}, ${read.definingClass}->${read.name}()Z
         move-result v${site.answer}
-    """.trimIndent(), ExternalLabel("store", getInstruction(site.at)))
+        invoke-static {v${site.box}, v${site.answer}}, ${site.setter}
+    """.trimIndent(), ExternalLabel("done", getInstruction(done)))
 }
 
 /** Every method that logs the composer's send click. findControls answers it from its shared walk. */
