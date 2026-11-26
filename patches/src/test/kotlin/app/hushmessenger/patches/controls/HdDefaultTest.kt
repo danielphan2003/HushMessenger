@@ -9,6 +9,7 @@ import com.android.tools.smali.dexlib2.Opcode
 import com.android.tools.smali.dexlib2.iface.instruction.FiveRegisterInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.Instruction
 import com.android.tools.smali.dexlib2.iface.instruction.NarrowLiteralInstruction
+import com.android.tools.smali.dexlib2.iface.instruction.OffsetInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.OneRegisterInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
 import com.android.tools.smali.dexlib2.iface.reference.StringReference
@@ -271,9 +272,13 @@ class HdDefaultTest {
         val first = code[store] as FiveRegisterInstruction
         val last = code[again] as FiveRegisterInstruction
         assertEquals(listOf(first.registerC, first.registerD), listOf(last.registerC, last.registerD))
-        // Both of the hook's skips go to the return, and nothing branches past the hook to it.
+        // Both of the hook's skips go to the return right after it.
         assertEquals(Opcode.RETURN_VOID, code[again + 1].opcode)
-        assertEquals(again + 1, code.size - 1)
+        val addresses = code.runningFold(0) { address, instruction -> address + instruction.codeUnits }
+        for (skip in listOf(store + 1, store + 5)) {
+            val target = addresses[skip] + (code[skip] as OffsetInstruction).codeOffset
+            assertEquals(addresses[again + 1], target)
+        }
     }
 
     @Test fun anInsertHandlerThatTakesItsAnswerAsAParameterIsRefused() {
