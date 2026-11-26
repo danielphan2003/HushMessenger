@@ -6,8 +6,10 @@ import app.morphe.patcher.util.proxy.mutableTypes.MutableClass
 import app.morphe.patcher.util.proxy.mutableTypes.MutableMethod
 import com.android.tools.smali.dexlib2.AccessFlags
 import com.android.tools.smali.dexlib2.Opcode
+import com.android.tools.smali.dexlib2.iface.instruction.FiveRegisterInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.Instruction
 import com.android.tools.smali.dexlib2.iface.instruction.NarrowLiteralInstruction
+import com.android.tools.smali.dexlib2.iface.instruction.OffsetInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.OneRegisterInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
 import com.android.tools.smali.dexlib2.iface.reference.StringReference
@@ -249,18 +251,34 @@ class HdDefaultTest {
     @Test fun theComposerStartsFromTheRememberedAnswerToo() {
         val classes = hdFixture()
         val insert = classes.method(INSERT)
+        val stock = insert.code().indexOfFirst { it.reference() == HD_SET }
         insert.injectHdDefaultInsert(insert.hdDefaultInsert(), classes.method(HD_READ))
         val code = insert.code()
-        val store = code.indexOfFirst { it.reference() == HD_SET }
-        assertTrue(store > 7)
-        // The switch is read first, so a stored answer still wins; then the remembered answer lands in the box's answer.
-        assertEquals("$HOLDER->A01()Z", code[store - 2].reference())
-        assertEquals("$SETTINGS->enabled(Ljava/lang/String;)Z", code[store - 5].reference())
-        assertEquals(HD_DEFAULT, ((code[store - 6] as ReferenceInstruction).reference as StringReference).string)
-        assertEquals(listOf(Opcode.IF_EQZ, Opcode.CONST_STRING, Opcode.INVOKE_STATIC, Opcode.MOVE_RESULT,
-            Opcode.IF_EQZ, Opcode.INVOKE_STATIC, Opcode.MOVE_RESULT), code.subList(store - 7, store).map { it.opcode })
-        // The stock branch is untouched after the store.
-        assertEquals(Opcode.RETURN_VOID, code[store + 1].opcode)
+        val stores = code.indices.filter { code[it].reference() == HD_SET }
+        assertEquals(2, stores.size)
+        val (store, again) = stores
+        // The stock store is untouched, and every branch the handler takes still lands on it, so each path then falls
+        // through to the hook: the empty tray and the loop's exits alike.
+        assertEquals(stock, store)
+        val hook = code.subList(store + 1, again + 1)
+        assertEquals(listOf(Opcode.IF_NEZ, Opcode.CONST_STRING, Opcode.INVOKE_STATIC, Opcode.MOVE_RESULT,
+            Opcode.IF_EQZ, Opcode.INVOKE_STATIC, Opcode.MOVE_RESULT, Opcode.INVOKE_STATIC), hook.map { it.opcode })
+        // An item already HD keeps the box on; otherwise the switch, then the remembered answer, stored into the same box.
+        assertEquals(3, (hook[0] as OneRegisterInstruction).registerA)
+        assertEquals(HD_DEFAULT, ((hook[1] as ReferenceInstruction).reference as StringReference).string)
+        assertEquals("$SETTINGS->enabled(Ljava/lang/String;)Z", hook[2].reference())
+        assertEquals("$HOLDER->A01()Z", hook[5].reference())
+        assertEquals(3, (hook[6] as OneRegisterInstruction).registerA)
+        val first = code[store] as FiveRegisterInstruction
+        val last = code[again] as FiveRegisterInstruction
+        assertEquals(listOf(first.registerC, first.registerD), listOf(last.registerC, last.registerD))
+        // Both of the hook's skips go to the return right after it.
+        assertEquals(Opcode.RETURN_VOID, code[again + 1].opcode)
+        val addresses = code.runningFold(0) { address, instruction -> address + instruction.codeUnits }
+        for (skip in listOf(store + 1, store + 5)) {
+            val target = addresses[skip] + (code[skip] as OffsetInstruction).codeOffset
+            assertEquals(addresses[again + 1], target)
+        }
     }
 
     @Test fun anInsertHandlerThatTakesItsAnswerAsAParameterIsRefused() {
